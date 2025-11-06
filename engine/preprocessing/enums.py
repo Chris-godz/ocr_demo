@@ -47,6 +47,8 @@ class ResizeMode(StrEnum):
     pad = auto()
     pycls = auto()
     ocr = auto()
+    ppocr = auto()
+    short = auto()  # resize_short mode (PaddleClas style)
     
     @classmethod
     def has_value(cls, value: str) -> bool:
@@ -61,6 +63,7 @@ class ResizeArgEnum(StrEnum):
     scale_method = auto()
     pad_location = auto()
     pad_value = auto()
+    normalize = auto()
 
 
 class BackendEnum(StrEnum):

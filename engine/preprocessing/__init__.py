@@ -75,7 +75,7 @@ def parse_npu_preprocessing_ops(preprocessings: List[PREPROCESSING]) -> List[Cal
     return ops_list
 
 
-def parse_preprocessing_ops(preprocessings: List[PREPROCESSING]) -> List[Callable]:
+def parse_preprocessing_ops(preprocessings: List[PREPROCESSING], is_ort: bool = False) -> List[Callable]:
     """parse preprocessing ops.
 
     Args:
@@ -84,6 +84,8 @@ def parse_preprocessing_ops(preprocessings: List[PREPROCESSING]) -> List[Callabl
     Returns:
         List[Callable]: preprocessings ops list.
     """
+    if is_ort:
+        return parse_ort_preprocessing_ops(preprocessings)
     return parse_npu_preprocessing_ops(preprocessings)
 
 
@@ -96,9 +98,9 @@ class PreProcessingCompose:
         preprocessings (List[PREPROCESSING]): preprocessings List.
     """
 
-    def __init__(self, preprocessings: List[PREPROCESSING]) -> None:
+    def __init__(self, preprocessings: List[PREPROCESSING], is_ort: bool = False) -> None:
         self._check_preprocessings(preprocessings)
-        self.preprocessings_ops = parse_preprocessing_ops(preprocessings)
+        self.preprocessings_ops = parse_preprocessing_ops(preprocessings, is_ort=is_ort)
 
     def _check_preprocessings(self, preprocessings: List[PREPROCESSING]) -> None:
         """check if the preprocessings are valid.
@@ -115,13 +117,17 @@ class PreProcessingCompose:
                 raise ValueError(f"Invalid Preprocessing name. {preprocessing}")
 
     def __call__(self, inputs: np.ndarray) -> np.ndarray:
-        """Pre processing the inputs.
-
-        Args:
-            inputs (np.ndarray): inputs.
-
-        Returns:
-            np.ndarray: pre processed inputs.
-        """
         compose = Compose(self.preprocessings_ops)
-        return compose(inputs)
+        result = compose(inputs)
+        
+        for op in self.preprocessings_ops:
+            if hasattr(op, '_last_padding_info') and op._last_padding_info is not None:
+                self._last_padding_info = op._last_padding_info
+                break
+        else:
+            self._last_padding_info = None
+            
+        return result
+    
+    def get_last_padding_info(self):
+        return getattr(self, '_last_padding_info', None)

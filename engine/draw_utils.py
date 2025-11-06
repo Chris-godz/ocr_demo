@@ -114,7 +114,7 @@ def draw_box_txt_fine(img_size, box, txt, font_path=None):
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=(255, 255, 255),
     )
-    return img_right_text
+    return img_right_text, (text_width, text_height)
 
 def transform_bbox_to_original(crop_bbox, original_poly, crop_image_shape=None):
     if isinstance(crop_bbox, list) and len(crop_bbox) == 8:
@@ -355,56 +355,18 @@ def draw_with_poly_enhanced(image, bbox_text_poly_shape_quadruplets, font_path=N
     random.seed(0)
     draw_left = ImageDraw.Draw(img_left)
     
-    bbox_text_pairs = []
-
-    for crop_bbox, txt, _, image_shape in bbox_text_poly_shape_quadruplets:
-        '''
-        crop_bbox : [[291.0, 291.0], [334.0, 288.0], [334.0, 331.0], [291.0, 334.0]] -> poly to bbox 
-        txt : "xxx"
-        original_poly : ?
-        crop_shape : (1150, 720, 3)
-        '''
-        try:
-            # original_poly = [0, 0, crop_shape[0], 0, crop_shape[0], crop_shape[1], 0, crop_shape[1]]
-            # original_bbox = transform_bbox_to_original_with_border(
-            #     crop_bbox, original_poly, crop_shape, border_width=0
-            # )
-            original_bbox = poly2bbox(crop_bbox[0])
-            bbox_text_pairs.append((crop_bbox[0], original_bbox, txt))
-        except Exception as e:
-            continue
-    
-    for poly_bbox, bbox, txt in bbox_text_pairs:
+    for poly_bbox, txt, _, image_shape in bbox_text_poly_shape_quadruplets:
         try:
             color = (
                 random.randint(0, 255),
                 random.randint(0, 255),
                 random.randint(0, 255),
             )
-            
-            if isinstance(bbox, list) and len(bbox) == 8:
-                box = np.array([[bbox[i], bbox[i+1]] for i in range(0, 8, 2)])
-            elif isinstance(bbox, list) and len(bbox) == 4:
-                x1, y1, x2, y2 = bbox
-                box = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-            else:
-                box = np.array(bbox)
-            
-            if len(box) > 4:
-                pts = [(x, y) for x, y in box.tolist()]
-                draw_left.polygon(pts, outline=color, width=8)
-                box = get_minarea_rect(box)
-                height = int(0.5 * (max(box[:, 1]) - min(box[:, 1])))
-                box[:2, 1] = np.mean(box[:, 1])
-                box[2:, 1] = np.mean(box[:, 1]) + min(20, height)
-            
-            box_pts = [(int(x), int(y)) for x, y in box.tolist()]
-            draw_left.polygon(box_pts, outline="green", fill=color, width=2)
+            pts = np.reshape(np.array(poly_bbox), [4, 2]).astype(np.int64)
+            draw_left.polygon(pts.tolist(), outline="green", width=3)
             
             if txt.strip():
-                img_right_text = draw_box_txt_fine((w, h), box, txt, font_path)
-                pts = np.array(box, np.int32).reshape((-1, 1, 2))
-                cv2.polylines(img_right_text, [pts], True, color, 1)
+                img_right_text, _ = draw_box_txt_fine((w, h), pts.tolist(), txt, font_path)
                 img_right = cv2.bitwise_and(img_right, img_right_text)
         except Exception as e:
             continue
@@ -491,10 +453,8 @@ def text_visual(
         font_path: the path of font which is used to draw text
     return(array):
     """
-    if scores is not None:
-        assert len(texts) == len(
-            scores
-        ), "The number of txts and corresponding scores must match"
+    if scores is not None and texts is not None:
+        assert len(texts) == len(scores), "The number of txts and corresponding scores must match"
 
     def create_blank_img():
         blank_img = np.ones(shape=[img_h, img_w], dtype=np.int8) * 255
@@ -506,7 +466,6 @@ def text_visual(
     blank_img, draw_txt = create_blank_img()
 
     font_size = 20
-    txt_color = (0, 0, 0)
     font = ImageFont.truetype(font_path, font_size, encoding="utf-8")
 
     gap = font_size + 5
@@ -517,6 +476,14 @@ def text_visual(
         if scores[idx] < threshold or math.isnan(scores[idx]):
             index -= 1
             continue
+        
+        # Handle empty or failed recognition text
+        if not txt or txt.strip() == "":
+            txt = "[NO_TEXT_DETECTED]"
+            txt_color = (255, 0, 0)  # Red color for failed recognition
+        else:
+            txt_color = (0, 0, 0)  # Black color for successful recognition
+            
         first_line = True
         while str_count(txt) >= img_w // font_size - 4:
             tmp = txt
@@ -579,7 +546,18 @@ def draw_ocr(
         if scores is not None and (scores[i] < drop_score or math.isnan(scores[i])):
             continue
         box = np.reshape(np.array(boxes[i]), [-1, 1, 2]).astype(np.int64)
-        image = cv2.polylines(np.array(image), [box], True, (255, 255, 0), 2)
+        
+        # Determine box color and thickness based on text recognition result
+        if txts is None or i >= len(txts) or not txts[i] or txts[i].strip() == "":
+            # Red color with thicker line for boxes without recognized text
+            box_color = (0, 0, 255)  # BGR format: Red
+            thickness = 3
+        else:
+            # Green color for boxes with recognized text
+            box_color = (0, 255, 0)  # BGR format: Green
+            thickness = 2
+            
+        image = cv2.polylines(np.array(image), [box], True, box_color, thickness)
     if txts is not None:
         img = np.array(resize_img(image, input_size=600))
         txt_img = text_visual(

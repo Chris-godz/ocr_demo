@@ -1,15 +1,17 @@
 import logging
-from typing import List
+from typing import List, Tuple
 from dataclasses import dataclass
 from PIL import Image, ImageOps
+import cv2
+import numpy as np
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 det_preprocess = [           
             {
                 "resize": {
-                    "mode": "default",
-                    "size": [480, 480],
+                    "mode": "ppocr",
+                    "size": [640, 640],
                 }
             },
             {
@@ -32,8 +34,31 @@ cls_preprocess = [
             {
                 "resize": {
                     "mode": "default",
-                    "size": [48, 192],
+                    "size": [80, 160],
                 }
+            },
+            {
+                "div": {
+                    "x": 255
+                }
+            },
+            {
+                "normalize": {
+                    "std": [0.229, 0.224, 0.225],
+                    "mean": [0.485, 0.456, 0.406],
+                }
+            },
+            {
+                "transpose": {"axis": [2, 0, 1]}
+            },
+        ]
+
+rec_preprocess = [
+            {
+                "resize": {
+                    "mode": "ppocr",
+                    "size": [48, 320],
+                },
             },
             {
                 "div": {
@@ -51,22 +76,45 @@ cls_preprocess = [
             },
         ]
 
-rec_preprocess = [
+doc_ori_preprocess = [
             {
                 "resize": {
-                    "mode": "default",
-                    "size": [48, 320],
-                },
+                    "mode": "short",  # PaddleClas resize_short: resize shorter side to 256
+                    "size": [256, 256],
+                }
+            },
+            {
+                "centercrop": {
+                    "height": 224,  # PaddleClas center crop to 224x224
+                    "width": 224,
+                }
             },
             {
                 "div": {
-                    "x": 255
+                    "x": 255  # Scale to [0, 1]
                 }
             },
             {
                 "normalize": {
-                    "std": [0.5, 0.5, 0.5],
-                    "mean": [0.5, 0.5, 0.5],
+                    "std": [0.229, 0.224, 0.225],  # ImageNet std
+                    "mean": [0.485, 0.456, 0.406],  # ImageNet mean
+                }
+            },
+            {
+                "transpose": {"axis": [2, 0, 1]}  # HWC -> CHW
+            },
+        ]
+
+uvdoc_preprocess =  [
+            {
+                "resize": {
+                    "mode": "default",
+                    "size": [712, 488],
+                }
+            },
+            {
+                "div": {
+                    "x": 255
                 }
             },
             {
@@ -98,3 +146,43 @@ class OCRResult:
     bbox: List[List[float]]
     type: str = "text"
 
+
+def resize_align_corners(image: np.ndarray, target_size: Tuple[int, int], mode: str = "linear") -> np.ndarray:
+    src_h, src_w = image.shape[:2]
+    target_h, target_w = target_size
+    
+    if src_h == target_h and src_w == target_w:
+        return image.copy()
+    
+    if target_h > 1:
+        y_ratio = (src_h - 1) / (target_h - 1)
+        y_coords = np.arange(target_h) * y_ratio
+    else:
+        y_coords = np.zeros(target_h)
+    
+    if target_w > 1:
+        x_ratio = (src_w - 1) / (target_w - 1)
+        x_coords = np.arange(target_w) * x_ratio
+    else:
+        x_coords = np.zeros(target_w)
+    
+    x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+    
+    if mode == "linear":
+        interpolation = cv2.INTER_LINEAR
+    elif mode == "nearest":
+        x_grid = np.round(x_grid)
+        y_grid = np.round(y_grid)
+        interpolation = cv2.INTER_NEAREST
+    else:
+        interpolation = cv2.INTER_LINEAR
+    
+    resized = cv2.remap(
+        image,
+        x_grid.astype(np.float32),
+        y_grid.astype(np.float32),
+        interpolation=interpolation,
+        borderMode=cv2.BORDER_REPLICATE
+    )
+    
+    return resized

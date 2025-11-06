@@ -5,6 +5,30 @@ import pyclipper
 import re
 
 
+class DocOriPostProcess(object):
+    def __init__(self, label_list=['0', '90', '180', '270'], **kwargs):
+        super(DocOriPostProcess, self).__init__()
+        self.label_list = label_list
+        self.k = 1
+
+    def __call__(self, preds):
+        if preds.ndim == 2:
+            preds = preds[0]
+        logits = preds
+        
+        exp_values = np.exp(logits - np.max(logits))
+        probabilities = exp_values / np.sum(exp_values)
+        if max(probabilities) < 0.4:
+            return [("0", 1.0)]
+        
+        topk_indices = np.argsort(probabilities)[::-1][:self.k]
+        decode_out = [
+            (self.label_list[idx], logits[idx]) for i, idx in enumerate(topk_indices)
+        ]
+        
+        return decode_out
+
+
 class ClsPostProcess(object):
     def __init__(self, label_list=['0', '180'], key=None, **kwargs):
         super(ClsPostProcess, self).__init__()
@@ -59,13 +83,35 @@ class DetPostProcess(object):
         ], "Score mode must be in [slow, fast] but got: {}".format(score_mode)
 
         self.dilation_kernel = None if not use_dilation else np.array([[1, 1], [1, 1]])
-
-    def polygons_from_bitmap(self, pred, _bitmap, dest_width, dest_height):
+        
+    def sort_boxes(self, boxes):
         """
-        _bitmap: single map with shape (1, H, W),
-            whose values are binarized as {0, 1}
+        Sort boxes in reading order (top-to-bottom, left-to-right)
+        
+        Args:
+            boxes: List of bbox coordinates [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            
+        Returns:
+            Sorted boxes with indices
         """
+        # Calculate box centers for sorting
+        box_centers = []
+        for box in boxes:
+            box_array = np.array(box)
+            center_x = np.mean(box_array[:, 0])
+            center_y = np.mean(box_array[:, 1])
+            box_centers.append((center_x, center_y))
+        
+        # Sort by: 1) y-coordinate (top to bottom), 2) x-coordinate (left to right)
+        sorted_indices = sorted(
+            range(len(boxes)), 
+            key=lambda i: (box_centers[i][1] // 10, box_centers[i][0])  # Group by rows
+        )
+        
+        sorted_boxes = [boxes[i] for i in sorted_indices]
+        return sorted_boxes, sorted_indices
 
+    def polygons_from_bitmap(self, pred, _bitmap, dest_width, dest_height, padding_info=None):
         bitmap = _bitmap
         height, width = bitmap.shape
 
@@ -102,20 +148,29 @@ class DetPostProcess(object):
                 continue
 
             box = np.array(box)
-            box[:, 0] = np.clip(np.round(box[:, 0] / width * dest_width), 0, dest_width)
-            box[:, 1] = np.clip(
-                np.round(box[:, 1] / height * dest_height), 0, dest_height
-            )
+            if padding_info is not None:
+                orig_width = padding_info.get('orig_width', dest_width)
+                orig_height = padding_info.get('orig_height', dest_height)
+                padded_width = padding_info.get('padded_width', width)
+                padded_height = padding_info.get('padded_height', height)
+                
+                # Scale from model output size to padded image size, then to original image size
+                # Since padding is only applied to right/bottom (left=0, top=0), no offset needed
+                scale_x = (padded_width / width) * (orig_width / padded_width)
+                scale_y = (padded_height / height) * (orig_height / padded_height)
+                
+                # Simplified: scale_x = orig_width / width, scale_y = orig_height / height
+                box[:, 0] = np.clip(box[:, 0] * orig_width / width, 0, orig_width)
+                box[:, 1] = np.clip(box[:, 1] * orig_height / height, 0, orig_height)
+            else:
+                box[:, 0] = np.clip(np.round(box[:, 0] / width * dest_width), 0, dest_width)
+                box[:, 1] = np.clip(np.round(box[:, 1] / height * dest_height), 0, dest_height)
+                
             boxes.append(box.tolist())
             scores.append(score)
         return boxes, scores
 
-    def boxes_from_bitmap(self, pred, _bitmap, dest_width, dest_height):
-        """
-        _bitmap: single map with shape (1, H, W),
-                whose values are binarized as {0, 1}
-        """
-
+    def boxes_from_bitmap(self, pred, _bitmap, dest_width, dest_height, padding_info=None):
         bitmap = _bitmap
         height, width = bitmap.shape
 
@@ -153,12 +208,24 @@ class DetPostProcess(object):
                 continue
             box = np.array(box)
             
-            # print("cliping box 1", type(box), box.shape, width, dest_width)
-            box[:, 0] = np.clip(np.round(box[:, 0] / width * dest_width), 0, dest_width)
-            # print("cliping box 2", type(box), box.shape, height, dest_height)
-            box[:, 1] = np.clip(
-                np.round(box[:, 1] / height * dest_height), 0, dest_height
-            )
+            if padding_info is not None:
+                pad_left = padding_info.get('left', 0)
+                pad_top = padding_info.get('top', 0)
+                orig_width = padding_info.get('orig_width', dest_width)
+                orig_height = padding_info.get('orig_height', dest_height)
+                padded_width = padding_info.get('padded_width', width)
+                padded_height = padding_info.get('padded_height', height)
+                
+                # Step 1: Scale from model output size to padded image size
+                scale_x = padded_width / width
+                scale_y = padded_height / height
+                box[:, 0] = box[:, 0] * scale_x
+                box[:, 1] = box[:, 1] * scale_y
+                
+            else:
+                box[:, 0] = np.clip(np.round(box[:, 0] / width * dest_width), 0, dest_width)
+                box[:, 1] = np.clip(np.round(box[:, 1] / height * dest_height), 0, dest_height)
+                
             boxes.append(box.astype("int32"))
             scores.append(score)
         return np.array(boxes, dtype="int32"), scores
@@ -229,7 +296,7 @@ class DetPostProcess(object):
         cv2.fillPoly(mask, contour.reshape(1, -1, 2).astype("int32"), 1)
         return cv2.mean(bitmap[ymin : ymax + 1, xmin : xmax + 1], mask)[0]
 
-    def __call__(self, outputs, origin_shape):
+    def __call__(self, outputs, origin_shape, padding_info=None):
         pred = outputs
         pred = np.array(pred)
         pred = pred[:, 0, :, :]
@@ -247,16 +314,22 @@ class DetPostProcess(object):
                 mask = segmentation[batch_index]
             if self.box_type == "poly":
                 boxes, scores = self.polygons_from_bitmap(
-                    pred[batch_index], mask, src_w, src_h
+                    pred[batch_index], mask, src_w, src_h, padding_info
                 )
             elif self.box_type == "quad":
                 boxes, scores = self.boxes_from_bitmap(
-                    pred[batch_index], mask, src_w, src_h
+                    pred[batch_index], mask, src_w, src_h, padding_info
                 )
             else:
                 raise ValueError("box_type can only be one of ['quad', 'poly']")
+            
+            if len(boxes) > 0:
+                sorted_boxes, sorted_indices = self.sort_boxes(boxes)
+                sorted_scores = [scores[i] for i in sorted_indices]
+                boxes = sorted_boxes
+                scores = sorted_scores
+            
             boxes_batch.append({"points": boxes})
-        # print("postprocess end")
         return boxes_batch
     
 

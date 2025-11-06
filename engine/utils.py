@@ -105,22 +105,30 @@ def resize_img(img, input_size=600):
     return img
 
 
-def rec_router(width, height, ratio_interval=10, ratio_max=30):
-        ratio = width / height
-        map_value = 0
-        while map_value * ratio_interval < ratio_max:
-            ratio_res = map_value * ratio_interval + ratio_interval // 2
-            if ratio < (map_value + 1) * ratio_interval:
-                break
-            map_value += 1
+def det_router(width, height):
+    if all([width < 800, height < 800]):
+        return 640
+    else:
+        return 960
 
-        if height < 12:
-            height_res = 10
-        elif height < 24:
-            height_res = 20
-        else:
-            height_res = 30
-        return ratio_res, height_res
+
+def rec_router(width, height):
+    ratio = width / height
+
+    if ratio <= 3:
+        ratio_res = 3
+    elif ratio <= 5:
+        ratio_res = 5
+    elif ratio <= 10:
+        ratio_res = 10
+    elif ratio <= 15:
+        ratio_res = 15
+    elif ratio <= 25:
+        ratio_res = 25
+    else:
+        ratio_res = 35
+
+    return ratio_res
 
 def split_bbox_for_recognition(bbox, rec_image_shape, overlap_ratio=0.1):
     bbox = np.array(bbox, dtype=np.float32)
@@ -130,7 +138,7 @@ def split_bbox_for_recognition(bbox, rec_image_shape, overlap_ratio=0.1):
     rec_ratio = rec_image_shape[2] / rec_image_shape[1]  # W/H
     bbox_ratio = width / height
     
-    if bbox_ratio > rec_ratio:
+    if bbox_ratio > rec_ratio * 1.3:
         num_splits = math.ceil(bbox_ratio / rec_ratio)
         split_width = width / num_splits
         

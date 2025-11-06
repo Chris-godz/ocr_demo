@@ -51,6 +51,19 @@ ARGS_FOR_MODE = {
         ResizeArgEnum.scale_method: None,
         ResizeArgEnum.interpolation: InterpolationEnum.LINEAR,
     },
+    ResizeMode.ppocr: {
+        ResizeArgEnum.backend: BackendEnum.cv2,
+        ResizeArgEnum.align_side: AlignSideEnum.both,  # PPOCR handles its own ratio calculation
+        ResizeArgEnum.scale_method: None,
+        ResizeArgEnum.interpolation: InterpolationEnum.LINEAR,
+        ResizeArgEnum.normalize: None,
+    },
+    ResizeMode.short: {
+        ResizeArgEnum.backend: BackendEnum.cv2,
+        ResizeArgEnum.align_side: AlignSideEnum.short,  # Resize based on shorter side
+        ResizeArgEnum.scale_method: None,
+        ResizeArgEnum.interpolation: InterpolationEnum.LINEAR,
+    },
 }
 
 
@@ -65,6 +78,7 @@ class ResizeArgs:
     scale_method: Optional[ScaleMethodEnum] = None
     pad_location: Optional[str] = None
     pad_value: Optional[List[int]] = None
+    normalize: bool = False
     limit_side_len: int = None
     limit_type: str = None
 
@@ -111,31 +125,175 @@ class TorchVisionResize:
         aligned_height, aligned_width = aligned_size
         return np.array(inputs.resize((aligned_width, aligned_height), PILResizeInterpolationEnum[self.interpolation]))
 
-class OCRResize:
-    """CV2 Resize."""
+class ResizeShort:
+    """Resize Short Side: Resize image so that the shorter side equals target size.
+    
+    PaddleClas approach (resize_short):
+    1. Determine which side is shorter (height or width)
+    2. Calculate scale to make shorter side equal to target size
+    3. Resize image maintaining aspect ratio
+    
+    Example:
+        Input: 300x400 image, target=256
+        - Shorter side is 300 (height)
+        - Scale = 256/300 = 0.853
+        - Output: 256x341 (height becomes 256, width scales proportionally)
+    """
 
     def __init__(self, size: List[int], interpolation: InterpolationEnum, *args, **kwargs) -> None:
-        self.size = size
+        print("Short Resize initialized with size:", size)
+        self.size = size if isinstance(size, list) else [size, size]
+        self.target_short = int(self.size[0])  # Use first dimension as target for short side
         self.interpolation = interpolation
 
-    def __call__(self, inputs: np.ndarray | Image.Image, *args, **kwargs) -> np.ndarray:
-
-        imgH, imgW = self.size
-        h, w, c = inputs.shape
-        ratio = w / float(h)
-
-        if math.ceil(imgH * ratio) > imgW:
-            resized_w = imgW
+    def __call__(self, inputs: np.ndarray | Image.Image, aligned_size: Tuple[int, int] = None, ratios: Tuple[float, float] = None, *args, **kwargs) -> np.ndarray:
+        if isinstance(inputs, Image.Image):
+            inputs = np.array(inputs)
+        
+        orig_height, orig_width = inputs.shape[:2]
+        
+        # Determine shorter side
+        if orig_height < orig_width:
+            # Height is shorter
+            new_height = self.target_short
+            scale = self.target_short / orig_height
+            new_width = int(orig_width * scale)
         else:
-            resized_w = int(math.ceil(imgH * ratio)) 
-        resized_image = cv2.resize(inputs, (resized_w, imgH))
-        resized_image = resized_image.astype("float32")
-        resized_image = resized_image.transpose((2, 0, 1)) / 255
-        resized_image -= 0.5
-        resized_image /= 0.5
-        padding_im = np.zeros((c, imgH, imgW), dtype=np.float32)
-        padding_im[:, :, 0:resized_w] = resized_image
-        return padding_im
+            # Width is shorter
+            new_width = self.target_short
+            scale = self.target_short / orig_width
+            new_height = int(orig_height * scale)
+        
+        # Resize image
+        resized_image = cv2.resize(
+            inputs,
+            (new_width, new_height),
+            interpolation=CVResizeInterpolationEnum[self.interpolation]
+        )
+        
+        return resized_image
+
+
+class PPOCRResize:
+    """PPOCR Resize: Pad first to match target ratio, then resize.
+    
+    PPOCR approach:
+    1. Calculate target aspect ratio
+    2. Pad original image to match target ratio (maintaining aspect ratio)
+    3. Resize the padded image to target size
+    
+    This ensures proper aspect ratio preservation for text recognition.
+    """
+
+    def __init__(self, size: List[int], interpolation: InterpolationEnum, pad_value: List[int] = None, normalize: bool = False, *args, **kwargs) -> None:
+        self.size = size  # [height, width] 
+        self.target_height = int(size[0])
+        self.target_width = int(size[1])
+        self.interpolation = interpolation
+        self.pad_value = pad_value if pad_value is not None else [114, 114, 114]
+        self.normalize = normalize
+        self._last_padding_info = None
+
+        self.debug_dir = "output/debug"
+        self.debug_counter = 0
+
+    def __call__(self, inputs: np.ndarray | Image.Image, aligned_size: Tuple[int, int] = None, ratios: Tuple[float, float] = None, *args, **kwargs) -> np.ndarray:
+        if isinstance(inputs, Image.Image):
+            inputs = np.array(inputs)
+        
+        orig_height, orig_width = inputs.shape[:2]
+        
+        target_ratio = self.target_width / self.target_height
+        orig_ratio = orig_width / orig_height
+        
+        padded_image, padding_info = self._pad_to_target_ratio(inputs, target_ratio, orig_ratio)
+        final_image = cv2.resize(
+            padded_image,
+            (self.target_width, self.target_height),
+            interpolation=CVResizeInterpolationEnum[self.interpolation]
+        )
+        
+        
+        self._last_padding_info = padding_info
+        
+        return final_image
+        
+
+    def _pad_to_target_ratio(self, inputs: np.ndarray, target_ratio: float, orig_ratio: float) -> Tuple[np.ndarray, dict]:
+        orig_height, orig_width = inputs.shape[:2]
+            
+        if orig_ratio < target_ratio:
+            new_width = int(orig_height * target_ratio)
+            pad_width = new_width - orig_width
+            
+            top = 0
+            bottom = 0
+            left = 0
+            right = pad_width
+            
+        else:
+            padding_info = {
+                'top': 0, 'bottom': 0, 'left': 0, 'right': 0,
+                'orig_height': orig_height, 'orig_width': orig_width,
+                'padded_height': orig_height, 'padded_width': orig_width
+            }
+            return inputs, padding_info
+        
+        padded_image = cv2.copyMakeBorder(
+            inputs,
+            top, bottom, left, right,
+            cv2.BORDER_CONSTANT,
+            value=self.pad_value
+        )
+        
+        padding_info = {
+            'top': top, 'bottom': bottom, 'left': left, 'right': right,
+            'orig_height': orig_height, 'orig_width': orig_width,
+            'padded_height': padded_image.shape[0], 'padded_width': padded_image.shape[1]
+        }
+        
+        return padded_image, padding_info
+
+    def get_padding_info(self, orig_shape: Tuple[int, int]) -> dict:
+        """Get padding information for debugging or further processing.
+        
+        Args:
+            orig_shape: Original image shape (height, width)
+            
+        Returns:
+            dict: Padding information including padding calculation
+        """
+        orig_height, orig_width = orig_shape
+        
+        target_ratio = self.target_width / self.target_height
+        orig_ratio = orig_width / orig_height
+        
+        padding_info = {
+            "original_size": (orig_height, orig_width),
+            "target_size": (self.target_height, self.target_width),
+            "original_ratio": orig_ratio,
+            "target_ratio": target_ratio,
+            "pad_value": self.pad_value
+        }
+        
+        if orig_ratio > target_ratio:
+            # Pad height
+            new_height = int(orig_width / target_ratio)
+            pad_height = new_height - orig_height
+            padding_info["padding"] = {"top": 0, "bottom": pad_height, "left": 0, "right": 0}
+            padding_info["padded_size"] = (new_height, orig_width)
+        elif orig_ratio < target_ratio:
+            # Pad width
+            new_width = int(orig_height * target_ratio)
+            pad_width = new_width - orig_width
+            padding_info["padding"] = {"top": 0, "bottom": 0, "left": 0, "right": pad_width}
+            padding_info["padded_size"] = (orig_height, new_width)
+        else:
+            # No padding needed
+            padding_info["padding"] = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+            padding_info["padded_size"] = (orig_height, orig_width)
+        
+        return padding_info
 
 class PadResize:
     """Pad Resize.
@@ -277,8 +435,10 @@ class Resize:
             return TorchVisionResize(**self.resize_args.__dict__)
         elif mode == ResizeMode.pad:
             return PadResize(**self.resize_args.__dict__)
-        elif mode == ResizeMode.ocr:
-            return OCRResize(**self.resize_args.__dict__)
+        elif mode == ResizeMode.ppocr:
+            return PPOCRResize(**self.resize_args.__dict__)
+        elif mode == ResizeMode.short:
+            return ResizeShort(**self.resize_args.__dict__)
         else:
             raise ValueError(f"Invalid Resize mode. {mode}")
 
@@ -327,4 +487,6 @@ class Resize:
             image_size = inputs.shape[:2]
         alined_size, ratios = self._alingn_size(image_size)
         res = self.resize_method(inputs, alined_size, ratios)
+        if hasattr(self.resize_method, '_last_padding_info') and self.resize_method._last_padding_info is not None:
+            self._last_padding_info = self.resize_method._last_padding_info
         return res

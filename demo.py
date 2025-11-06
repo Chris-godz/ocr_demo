@@ -20,7 +20,7 @@ import numpy as np
 import onnxruntime as ort
 # from baidu import demo_pipeline as dpp
 
-from engine.paddleocr import PaddleOcr
+from engine.paddleocr import PaddleOcr, AsyncPipelineOCR
 from engine.draw_utils import draw_with_poly_enhanced, draw_ocr
 
 from collections import deque
@@ -114,10 +114,14 @@ class ThumbnailListWidget(QListWidget):
 
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
+            added_count = 0
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
                 if os.path.isfile(file_path) and self.is_image(file_path):
                     self.add_thumbnail(file_path)
+                    added_count += 1
+            if added_count > 0:
+                print(f"Added {added_count} images via drag and drop")
         event.acceptProposedAction()
 
     def is_image(self, path):
@@ -518,7 +522,7 @@ class AccuracyInfoWidget(QWidget):
 
 
 class ImageViewerApp(QWidget):
-    def __init__(self, ocr_workers=None, app_version=None):
+    def __init__(self, ocr_workers=None, app_version=None, app_mode="sync"):
         super().__init__()
         self.setWindowTitle(f"PySide Image Viewer {app_version}")
         
@@ -527,9 +531,10 @@ class ImageViewerApp(QWidget):
         self.setGeometry(100, 100, screen_size.width()/1.2, screen_size.height()/1.2)
         
         # Store OCR workers
-        self.ocr_workers = ocr_workers if ocr_workers else []
+        self.ocr_workers = ocr_workers
         self.current_worker_index = 0  # Index for round-robin worker selection
         self.app_version = app_version
+        self.app_mode = app_mode
         # Initialize UI first
         self.init_ui()
         
@@ -653,11 +658,25 @@ class ImageViewerApp(QWidget):
         """)
         right_layout.addWidget(file_title)
 
+        # Add help text for multiple file selection
+        help_text = QLabel("• Drag & drop multiple images here\n• Or use Upload button (Ctrl+Click for multiple)")
+        help_text.setStyleSheet("""
+            QLabel {
+                font-size: 10px;
+                color: #666666;
+                padding: 2px;
+                border-radius: 2px;
+                margin-bottom: 4px;
+            }
+        """)
+        right_layout.addWidget(help_text)
+
         # Use ThumbnailListWidget with smaller thumbnail size for right layout
         self.file_list = ThumbnailListWidget(self.handle_file_list_click, thumbnail_size=50)
         right_layout.addWidget(self.file_list, stretch=8)
 
-        upload_button = QPushButton("Upload Images")
+        upload_button = QPushButton("Upload Multiple Images")
+        upload_button.setToolTip("Click to select multiple image files\n(Use Ctrl+Click or Shift+Click in file dialog for multiple selection)")
         upload_button.clicked.connect(self.upload_images)
         right_layout.addWidget(upload_button)
         
@@ -684,11 +703,19 @@ class ImageViewerApp(QWidget):
 
     def upload_images(self):
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Select Image Files", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+            self, 
+            "Select Multiple Image Files (Ctrl+Click or Shift+Click for multiple selection)", 
+            "", 
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.tif);;All Files (*)"
         )
-        for file_path in files:
-            # Use add_thumbnail method for better visual representation
-            self.file_list.add_thumbnail(file_path)
+        if files:
+            print(f"Selected {len(files)} image files")
+            for file_path in files:
+                # Use add_thumbnail method for better visual representation
+                self.file_list.add_thumbnail(file_path)
+            print(f"Added {len(files)} images to the list")
+        else:
+            print("No files selected")
 
     def handle_file_list_click(self, file_path):
         # Updated to handle file_path directly from ThumbnailListWidget
@@ -707,17 +734,25 @@ class ImageViewerApp(QWidget):
             return [], [], []
         
         try:
-            boxes, rotated_crops, rec_results = worker(image)
+            if self.app_mode == "async" and isinstance(worker, AsyncPipelineOCR):
+                results = worker.process_batch([image], timeout=60.0)
+                result = results[0]
+                boxes = result.get('boxes', [])
+                rec_results = result.get('rec_results', [])
+                processed_img = result.get('preprocessed_image', image)
+                rotated_crops = []  # Crops not returned in async mode
+            else:
+                boxes, rotated_crops, rec_results, processed_img = worker(image)
             self.performance_widget.update_performance_data(
                 det_npu=worker.detection_time_duration / worker.ocr_run_count,
                 cls_npu=worker.classification_time_duration / worker.ocr_run_count,
                 rec_npu=worker.recognition_time_duration / worker.ocr_run_count,
                 min_rec_npu=worker.min_recognition_time_duration / worker.ocr_run_count
             )
-            return boxes, rotated_crops, rec_results
+            return boxes, rotated_crops, rec_results, processed_img
         except Exception as e:
-            print(f"Error during OCR inference: {e}")
-            return [], [], []
+            print(f"[DEMO] Error during OCR inference: {e}")
+            return [], [], [], image
     
     def run_imagelist(self):
         if self.file_list.count() == 0:
@@ -731,8 +766,8 @@ class ImageViewerApp(QWidget):
             if image is None:
                 self.image_label.setText(f"Failed to load image file: {file_path}")
                 return
-            boxes, rotated_crops, rec_results = self.ocr_run(image, file_path)
-            self.last_result_image = self.ocr2image(image, boxes, boxes, rec_results)
+            boxes, crops, rec_results, processed_image = self.ocr_run(image, file_path)
+            self.last_result_image = self.ocr2image(processed_image, boxes, boxes, rec_results)
             self.last_result_text = rec_results
             preview_image_q.append((copy.deepcopy(self.last_result_image), rec_results, file_path))
         self.preview_grid.set_images(preview_image_q)
@@ -762,8 +797,8 @@ class ImageViewerApp(QWidget):
         text_lines += "   recognized text : confidence score\n\n"
         for i, text in enumerate(self.last_result_text):
             # Extract recognized text and confidence score from OCR result
-            recognized_text = text[0][TEXT_INDEX]
-            confidence_score = text[0][SCORE_INDEX]
+            recognized_text = text['text']
+            confidence_score = text['score']
             if confidence_score > CONFIDENCE_THRESHOLD:
                 text_lines += f"{i+1}. {recognized_text} : {confidence_score:.2f}\n"
         self.info_text.setText(text_lines)
@@ -788,16 +823,17 @@ class ImageViewerApp(QWidget):
 
     def ocr2image(self, org_image, boxes:list, rotated_crops:list, rec_results:list):
         from PIL import Image
-        image = org_image[:, :, ::-1]
-        ret_boxes = [line for line in boxes]
+        # image = org_image[:, :, ::-1]
+        image = cv2.cvtColor(org_image, cv2.COLOR_BGR2RGB)
+        ret_boxes = [line['bbox'] for line in rec_results]
         # Extract recognized text and confidence scores from OCR results
         # rec_results format: [[text, confidence_score], ...]
-        txts = [line[0][TEXT_INDEX] for line in rec_results]  # recognized text
-        scores = [line[0][SCORE_INDEX] for line in rec_results]  # confidence scores
+        txts = [line['text'] for line in rec_results]  # recognized text
+        scores = [line['score'] for line in rec_results]  # confidence scores
         bbox_text_poly_shape_quadruplets = []
         for i in range(len(ret_boxes)):
             bbox_text_poly_shape_quadruplets.append(
-                ([np.array(ret_boxes[i]).flatten()], txts[i], image.shape, image.shape)
+                ([np.array(ret_boxes[i]).flatten()], txts[i] if i < len(txts) else "", image.shape, image.shape)
             )
         im_sample = draw_with_poly_enhanced(image, bbox_text_poly_shape_quadruplets)
         return np.array(im_sample)
@@ -807,8 +843,8 @@ class ImageViewerApp(QWidget):
         if image is None:
             self.image_label.setText(f"Failed to load image file: {file_path}")
             return
-        boxes, crops, rec_results = self.ocr_run(image, file_path)
-        self.last_result_image = self.ocr2image(image, boxes, crops, rec_results)
+        boxes, crops, rec_results, processed_image = self.ocr_run(image, file_path)
+        self.last_result_image = self.ocr2image(processed_image, boxes, crops, rec_results)
         self.last_result_text = rec_results
         preview_image_q.append((copy.deepcopy(self.last_result_image), rec_results, file_path))
         self.update_display_from_cached()
@@ -829,59 +865,59 @@ class ImageViewerApp(QWidget):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--version', default='v4', choices=['v4', 'v5'])
+    parser.add_argument('--mode', default='sync', choices=['sync', 'async'])
     
     args = parser.parse_args()
     
-    '''
-    @brief:
-    @param:
-        det_model_path: str, the path of the detection model : det.dxnn
-        cls_model_path: str, the path of the classification model : cls.dxnn
-        rec_model_path: str, the path of the recognition model
-                                rec_ratio_5_height_10.dxnn
-                                rec_ratio_25_height_30.dxnn
-                                rec_ratio_25_height_20.dxnn
-                                rec_ratio_25_height_10.dxnn
-                                rec_ratio_5_height_30.dxnn
-                                rec_ratio_15_height_30.dxnn
-                                rec_ratio_15_height_10.dxnn
-                                rec_ratio_5_height_20.dxnn
-                                rec_ratio_15_height_20.dxnn
-    @return:
-        None
-    '''
     if args.version == 'v4':
-        det_model_path = "engine/model_files/v4/det.dxnn"
-        cls_model_path = "engine/model_files/v4/cls.dxnn"
-        rec_model_dirname = "engine/model_files/v4/"
-    elif args.version == 'v5':
-        det_model_path = "engine/model_files/v5/det_v5.dxnn"
-        cls_model_path = "engine/model_files/v5/cls_v5.dxnn"
-        rec_model_dirname = "engine/model_files/v5/"
+        print("v4 selected. This version is no longer supported. Please use v5.")
+        exit(90)
+ 
+    print("v5 selected. Will operate with orientation and distortion correction models and algorithms.")
+    print("v5 detection model: Modified to support 640 and 960 resolutions")
+    base_model_dirname = "engine/model_files/best"
+    det_model_dirname = base_model_dirname
+    rec_model_dirname = base_model_dirname
+    cls_model_path = f"{base_model_dirname}/textline_ori.dxnn"
+    uvdoc_model_path = f"{base_model_dirname}/UVDoc_pruned_p3.dxnn"
+    doc_ori_model_path = f"{base_model_dirname}/doc_ori.dxnn"
     
-    det_model = IE(det_model_path, IO().set_use_ort(True))
-    cls_model = IE(cls_model_path, IO().set_use_ort(True))
-        
     def make_rec_engines(model_dirname):
-        prefix = ''
-        if model_dirname.find('v5') != -1:
-            prefix = '_v5'
         io = IO().set_use_ort(True)
         rec_model_map = {}
-        ratio_interval = 10
-        max_ratio = 30
 
-        for i in range(ratio_interval // 2, max_ratio, ratio_interval):
-            rec_model_map[i] = {}
-            for height in [10, 20, 30]:
-                model_path = f"{model_dirname}/rec{prefix}_ratio_{i}_height_{height}.dxnn"
-                rec_model_map[i][height] = IE(model_path, io)
+        for ratio in [3, 5, 10, 15, 25, 35]:
+            model_path = f"{model_dirname}/rec_v5_ratio_{ratio}.dxnn"
+            rec_model_map[ratio] = IE(model_path, io)
         return rec_model_map
+    
+    def make_det_engines(model_dirname):
+        det_model_map = {}
+        for size in [640, 960]:
+            model_path = f"{model_dirname}/det_v5_{size}.dxnn"
+            det_model_map[size] = IE(model_path, IO().set_use_ort(True))
+        return det_model_map
 
     rec_models:dict = make_rec_engines(rec_model_dirname)
-    ocr_workers = [PaddleOcr(det_model, cls_model, rec_models, args.version) for _ in range(3)]
+    det_models:dict = make_det_engines(det_model_dirname)
+    cls_model = IE(cls_model_path, IO().set_use_ort(True)) # textline orientation model
+    doc_ori_model = IE(doc_ori_model_path, IO().set_use_ort(True))
+    doc_unwarping_model = IE(uvdoc_model_path, IO().set_use_ort(True))
+    
+    ocr_workers = []
+    
+    if args.mode == "async":
+        for ratio in [3, 5, 10, 15, 25, 35]:
+            rec_models[f'ratio_{ratio}'] = rec_models[ratio]
+        ocr_workers = [AsyncPipelineOCR(
+            det_models=det_models, cls_model=cls_model, rec_models=rec_models,
+            doc_ori_model=doc_ori_model, doc_unwarping_model=doc_unwarping_model, 
+            use_doc_preprocessing=True, use_doc_orientation=True
+        )]
+    else:
+        ocr_workers = [PaddleOcr(det_models, cls_model, rec_models, doc_ori_model, doc_unwarping_model, True) for _ in range(3)]
     
     app = QApplication(sys.argv)
-    viewer = ImageViewerApp(ocr_workers=ocr_workers, app_version=args.version)
+    viewer = ImageViewerApp(ocr_workers=ocr_workers, app_version=args.version, app_mode=args.mode)
     viewer.show()
     sys.exit(app.exec())
