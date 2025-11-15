@@ -1,6 +1,7 @@
 #pragma once
 
 #include "detection/text_detector.h"
+#include "classification/text_classifier.h"
 #include "recognition/text_recognizer.h"
 #include "common/types.hpp"
 #include "common/visualizer.h"
@@ -23,6 +24,10 @@ using DeepXOCR::TextBox;
 struct OCRPipelineConfig {
     // Detection配置
     DetectorConfig detectorConfig;
+    
+    // Classification配置
+    ClassifierConfig classifierConfig;
+    bool useClassification = true;    // 是否使用文本方向分类
     
     // Recognition配置
     RecognizerConfig recognizerConfig;
@@ -54,13 +59,15 @@ struct PipelineOCRResult {
  * @brief OCR Pipeline性能统计
  */
 struct OCRPipelineStats {
-    double detectionTime = 0.0;      // Detection耗时 (ms)
-    double recognitionTime = 0.0;    // Recognition耗时 (ms)
-    double totalTime = 0.0;          // 总耗时 (ms)
+    double detectionTime = 0.0;        // Detection耗时 (ms)
+    double classificationTime = 0.0;   // Classification耗时 (ms)
+    double recognitionTime = 0.0;      // Recognition耗时 (ms)
+    double totalTime = 0.0;            // 总耗时 (ms)
     
-    int detectedBoxes = 0;           // 检测到的文本框数量
-    int recognizedBoxes = 0;         // 成功识别的文本框数量
-    double recognitionRate = 0.0;    // 识别率 (%)
+    int detectedBoxes = 0;             // 检测到的文本框数量
+    int rotatedBoxes = 0;              // 旋转的文本框数量（180度）
+    int recognizedBoxes = 0;           // 成功识别的文本框数量
+    double recognitionRate = 0.0;      // 识别率 (%)
     
     void Show() const;
 };
@@ -70,10 +77,11 @@ struct OCRPipelineStats {
  * 
  * 功能：
  * 1. 文本检测（Detection）
- * 2. 文本识别（Recognition）
- * 3. 结果排序（从上到下，从左到右）
- * 4. 可视化输出
- * 5. 性能统计
+ * 2. 文本方向分类（Classification）
+ * 3. 文本识别（Recognition）
+ * 4. 结果排序（从上到下，从左到右）
+ * 5. 可视化输出
+ * 6. 性能统计
  */
 class OCRPipeline {
 public:
@@ -156,6 +164,7 @@ private:
 private:
     OCRPipelineConfig config_;
     std::unique_ptr<TextDetector> detector_;
+    std::unique_ptr<TextClassifier> classifier_;
     std::unique_ptr<TextRecognizer> recognizer_;
     bool initialized_ = false;
 };

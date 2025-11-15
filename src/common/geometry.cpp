@@ -86,21 +86,39 @@ cv::Mat Geometry::cropTextRegion(const cv::Mat& image,
     float max_width = std::max(width1, width2);
     float max_height = std::max(height1, height2);
 
-    // 计算目标宽度（保持宽高比）
-    int dst_width = static_cast<int>(max_width * dst_height / max_height);
+    // IMPORTANT: For vertical text (height > width * 2), rotate 90 degrees counterclockwise
+    // This matches Python's rotate_if_vertical logic
+    bool is_vertical = max_height > (max_width * 2);
+    if (is_vertical) {
+        std::swap(max_width, max_height);
+        // Rotate points 90 degrees counterclockwise: [TL, TR, BR, BL] -> [BL, TL, TR, BR]
+        std::vector<cv::Point2f> rotated_pts = {
+            ordered_pts[3],  // BL -> TL
+            ordered_pts[0],  // TL -> TR
+            ordered_pts[1],  // TR -> BR
+            ordered_pts[2]   // BR -> BL
+        };
+        ordered_pts = rotated_pts;
+    }
 
-    // 目标点（矩形）
+    // DON'T resize here! Keep original dimensions.
+    // Let Recognition's Preprocess do the PPOCRResize (pad + resize)
+    // This matches Python's behavior: get_rotate_crop_image keeps original size
+    int crop_width = static_cast<int>(max_width);
+    int crop_height = static_cast<int>(max_height);
+
+    // 目标点（矩形，保持原始尺寸）
     std::vector<cv::Point2f> dst_pts = {
         cv::Point2f(0, 0),
-        cv::Point2f(dst_width - 1, 0),
-        cv::Point2f(dst_width - 1, dst_height - 1),
-        cv::Point2f(0, dst_height - 1)
+        cv::Point2f(crop_width - 1, 0),
+        cv::Point2f(crop_width - 1, crop_height - 1),
+        cv::Point2f(0, crop_height - 1)
     };
 
-    // 透视变换
+    // 透视变换（保持原始尺寸）
     cv::Mat M = cv::getPerspectiveTransform(ordered_pts, dst_pts);
     cv::Mat warped;
-    cv::warpPerspective(image, warped, M, cv::Size(dst_width, dst_height));
+    cv::warpPerspective(image, warped, M, cv::Size(crop_width, crop_height));
 
     return warped;
 }

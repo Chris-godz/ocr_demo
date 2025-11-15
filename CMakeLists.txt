@@ -45,6 +45,7 @@ include_directories(${CMAKE_SOURCE_DIR}/3rd-party/clipper2/CPP/Clipper2Lib/inclu
 add_subdirectory(src/common)
 add_subdirectory(src/preprocessing)
 add_subdirectory(src/detection)
+add_subdirectory(src/classification)
 add_subdirectory(src/recognition)
 add_subdirectory(src/pipeline)
 # add_subdirectory(src/ocr_engine)

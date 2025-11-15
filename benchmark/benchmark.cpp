@@ -39,13 +39,13 @@ int main(int argc, char** argv) {
     LOG_INFO("📂 Visualization: %s", visDir.c_str());
     LOG_INFO("🔄 Runs per image: %d\n", runsPerImage);
     
-    // 配置Pipeline
+    // 配置Pipeline (参数与Python版本保持一致)
     ocr::OCRPipelineConfig config;
     config.detectorConfig.model640Path = modelDir + "/det_v5_640.dxnn";
     config.detectorConfig.model960Path = modelDir + "/det_v5_960.dxnn";
     config.detectorConfig.sizeThreshold = 800;
-    config.detectorConfig.boxThresh = 0.5f;
-    config.detectorConfig.unclipRatio = 1.6f;
+    config.detectorConfig.boxThresh = 0.6f;
+    config.detectorConfig.unclipRatio = 1.5f;
     config.detectorConfig.maxCandidates = 1000;
     
     config.recognizerConfig.modelPaths[3] = modelDir + "/rec_v5_ratio_3.dxnn";
@@ -57,6 +57,11 @@ int main(int argc, char** argv) {
     config.recognizerConfig.dictPath = projectRoot + "/engine/model_files/ppocrv5_dict.txt";
     config.recognizerConfig.confThreshold = 0.3f;
     config.recognizerConfig.inputHeight = 48;
+    
+    // Classification config
+    config.useClassification = true;
+    config.classifierConfig.modelPath = modelDir + "/textline_ori.dxnn";
+    config.classifierConfig.threshold = 0.9f;
     
     config.enableVisualization = false;
     config.sortResults = true;

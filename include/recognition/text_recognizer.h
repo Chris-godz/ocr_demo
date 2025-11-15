@@ -66,6 +66,9 @@ public:
     // Register callback for async mode
     void RegisterCallback(std::function<int(dxrt::TensorPtrs&, void*)> callback);
     
+    // Print model usage statistics
+    void PrintModelUsageStats() const;
+    
 private:
     RecognizerConfig config_;
     
@@ -75,6 +78,9 @@ private:
     
     // CTC Decoder
     std::unique_ptr<ocr::CTCDecoder> decoder_;
+    
+    // Model usage statistics
+    mutable std::map<int, int> model_usage_;
     
     // Select appropriate model based on image aspect ratio
     dxrt::InferenceEngine* SelectModel(const cv::Mat& image);

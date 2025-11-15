@@ -110,6 +110,9 @@ std::vector<std::pair<std::string, float>> TextRecognizer::RecognizeBatch(
 dxrt::InferenceEngine* TextRecognizer::SelectModel(const cv::Mat& image) {
     int ratio = CalculateRatio(image.cols, image.rows);
     
+    // Track model usage statistics
+    model_usage_[ratio]++;
+    
     auto it = models_.find(ratio);
     if (it != models_.end()) {
         return it->second.get();
@@ -131,6 +134,7 @@ dxrt::InferenceEngine* TextRecognizer::SelectModel(const cv::Mat& image) {
     
     if (closest_ratio != -1) {
         LOG_DEBUG("Using ratio_%d model instead", closest_ratio);
+        model_usage_[closest_ratio]++;
         return models_[closest_ratio].get();
     }
     
@@ -215,6 +219,25 @@ std::pair<std::string, float> TextRecognizer::Postprocess(dxrt::TensorPtrs& outp
     
     // 使用CTC解码器
     return decoder_->decode(outputs[0]);
+}
+
+void TextRecognizer::PrintModelUsageStats() const {
+    LOG_INFO("=== Recognition Model Usage Statistics ===");
+    int total = 0;
+    for (const auto& [ratio, count] : model_usage_) {
+        total += count;
+    }
+    
+    if (total == 0) {
+        LOG_INFO("No models used yet");
+        return;
+    }
+    
+    for (const auto& [ratio, count] : model_usage_) {
+        float percentage = (count * 100.0f) / total;
+        LOG_INFO("  ratio_%d: %d times (%.1f%%)", ratio, count, percentage);
+    }
+    LOG_INFO("  Total: %d recognitions", total);
 }
 
 } // namespace DeepXOCR

@@ -354,13 +354,49 @@ cv::Mat Visualizer::drawOCRResultsSideBySide(const cv::Mat& image,
             int box_width = bbox.width;
             int box_height = bbox.height;
             
-            // 根据框的大小调整字体大小（调小字体：原来是 box_height/2，现在是 box_height/3）
-            int font_size = std::max(12, std::min(box_height / 3, 32));
+            // 判断是否为垂直文本框 (Python logic: box_height > 2 * box_width and box_height > 30)
+            bool is_vertical = (box_height > 2 * box_width) && (box_height > 30);
             
-            // 绘制文字（使用FreeType支持UTF-8）
-            cv::Point text_pos(bbox.x + 5, bbox.y + bbox.height / 2 + font_size / 3);
-            putTextUTF8(img_right, box.text, text_pos, font, font_size, 
-                       cv::Scalar(0, 0, 0));
+            if (is_vertical) {
+                // 竖向绘制文本（逐字符从上到下）
+                int font_size = std::max(12, std::min(box_width / 2, 32));
+                int char_spacing = 2;  // Python的line_spacing=2
+                int padding = std::max(box_width / 20, 2);
+                
+                int start_x = bbox.x + (box_width - font_size) / 2;
+                int current_y = bbox.y + padding;
+                
+                // 逐字符绘制 - 和Python的 for char in text 一样
+                for (size_t i = 0; i < box.text.length(); ) {
+                    // 获取一个UTF-8字符
+                    unsigned char c = box.text[i];
+                    int char_len = (c & 0x80) ? ((c & 0x20) ? ((c & 0x10) ? 4 : 3) : 2) : 1;
+                    std::string single_char = box.text.substr(i, char_len);
+                    
+                    // 绘制字符
+                    putTextUTF8(img_right, single_char, cv::Point(start_x, current_y), 
+                               font, font_size, cv::Scalar(0, 0, 0));
+                    
+                    // 获取字符高度（类似Python的font.getbbox(char)）
+                    int char_height;
+                    if (g_ft2 && !g_ft2.empty()) {
+                        int baseline = 0;
+                        cv::Size size = g_ft2->getTextSize(single_char, font_size, -1, &baseline);
+                        char_height = size.height;
+                    } else {
+                        char_height = font_size;  // 回退方案
+                    }
+                    
+                    current_y += char_height + char_spacing;  // Python: y += char_height + line_spacing
+                    i += char_len;
+                }
+            } else {
+                // 横向绘制文本（原有逻辑）
+                int font_size = std::max(12, std::min(box_height / 3, 32));
+                cv::Point text_pos(bbox.x + 5, bbox.y + bbox.height / 2 + font_size / 3);
+                putTextUTF8(img_right, box.text, text_pos, font, font_size, 
+                           cv::Scalar(0, 0, 0));
+            }
         }
     }
     

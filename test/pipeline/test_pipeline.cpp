@@ -62,9 +62,9 @@ void printOCRResults(const std::string& imageName,
 
 int main(int argc, char** argv) {
     // 解析命令行参数
-    std::string testImagesDir = "../../../test/test_images";
-    std::string modelDir = "../../../engine/model_files";
-    std::string outputDir = "../../../test/pipeline/results";
+    std::string testImagesDir = "../test/test_images";
+    std::string modelDir = "../engine/model_files";
+    std::string outputDir = "../test/pipeline/results";
     
     if (argc >= 2) {
         testImagesDir = argv[1];
@@ -109,6 +109,13 @@ int main(int argc, char** argv) {
     config.recognizerConfig.confThreshold = 0.3f;
     config.recognizerConfig.inputHeight = 48;
     
+    // Classification 配置
+    config.classifierConfig.modelPath = modelDir + "/best/textline_ori.dxnn";
+    config.classifierConfig.threshold = 0.9;
+    config.classifierConfig.inputWidth = 160;
+    config.classifierConfig.inputHeight = 80;
+    config.useClassification = true;
+    
     // Pipeline配置
     config.enableVisualization = true;
     config.sortResults = true;
@@ -137,7 +144,9 @@ int main(int argc, char** argv) {
     // 处理每张图片
     int totalDetected = 0;
     int totalRecognized = 0;
+    int totalRotated = 0;
     double totalDetTime = 0.0;
+    double totalClsTime = 0.0;
     double totalRecTime = 0.0;
     double totalTime = 0.0;
     
@@ -180,7 +189,9 @@ int main(int argc, char** argv) {
         // 累计统计
         totalDetected += stats.detectedBoxes;
         totalRecognized += stats.recognizedBoxes;
+        totalRotated += stats.rotatedBoxes;
         totalDetTime += stats.detectionTime;
+        totalClsTime += stats.classificationTime;
         totalRecTime += stats.recognitionTime;
         totalTime += stats.totalTime;
     }
@@ -189,12 +200,17 @@ int main(int argc, char** argv) {
     LOG_INFO("\n========== Overall Statistics ==========");
     LOG_INFO("Total Images: %zu", imageFiles.size());
     LOG_INFO("Total Detected Boxes: %d", totalDetected);
+    LOG_INFO("Total Rotated Boxes: %d (%.1f%%)", totalRotated,
+            totalDetected == 0 ? 0.0 : 
+            (static_cast<double>(totalRotated) / totalDetected * 100.0));
     LOG_INFO("Total Recognized Boxes: %d", totalRecognized);
     LOG_INFO("Overall Recognition Rate: %.1f%%", 
             totalDetected == 0 ? 0.0 : 
             (static_cast<double>(totalRecognized) / totalDetected * 100.0));
     LOG_INFO("\nAverage Detection Time: %.2f ms/image", 
             totalDetTime / imageFiles.size());
+    LOG_INFO("Average Classification Time: %.2f ms/image", 
+            totalClsTime / imageFiles.size());
     LOG_INFO("Average Recognition Time: %.2f ms/image", 
             totalRecTime / imageFiles.size());
     LOG_INFO("Average Total Time: %.2f ms/image", 

@@ -16,9 +16,14 @@ void OCRPipelineConfig::Show() const {
     LOG_INFO("========== OCR Pipeline Configuration ==========");
     LOG_INFO("Detection Config:");
     detectorConfig.Show();
+    if (useClassification) {
+        LOG_INFO("\nClassification Config:");
+        classifierConfig.Show();
+    }
     LOG_INFO("\nRecognition Config:");
     recognizerConfig.Show();
     LOG_INFO("\nPipeline Config:");
+    LOG_INFO("  Use Classification: %s", useClassification ? "true" : "false");
     LOG_INFO("  Enable Visualization: %s", enableVisualization ? "true" : "false");
     LOG_INFO("  Sort Results: %s", sortResults ? "true" : "false");
     LOG_INFO("===============================================");
@@ -64,9 +69,11 @@ cv::Point2f PipelineOCRResult::getCenter() const {
 void OCRPipelineStats::Show() const {
     LOG_INFO("========== OCR Pipeline Statistics ==========");
     LOG_INFO("Detection Time: %.2f ms", detectionTime);
+    LOG_INFO("Classification Time: %.2f ms", classificationTime);
     LOG_INFO("Recognition Time: %.2f ms", recognitionTime);
     LOG_INFO("Total Time: %.2f ms", totalTime);
     LOG_INFO("Detected Boxes: %d", detectedBoxes);
+    LOG_INFO("Rotated Boxes: %d", rotatedBoxes);
     LOG_INFO("Recognized Boxes: %d", recognizedBoxes);
     LOG_INFO("Recognition Rate: %.1f%%", recognitionRate);
     LOG_INFO("============================================");
@@ -94,6 +101,18 @@ bool OCRPipeline::initialize() {
     if (!detector_->init()) {
         LOG_ERROR("Failed to initialize TextDetector");
         return false;
+    }
+    
+    // 初始化Classifier（可选）
+    if (config_.useClassification) {
+        classifier_ = std::make_unique<TextClassifier>(config_.classifierConfig);
+        if (!classifier_->Initialize()) {
+            LOG_ERROR("Failed to initialize TextClassifier");
+            return false;
+        }
+        LOG_INFO("Text Classifier enabled");
+    } else {
+        LOG_INFO("Text Classifier disabled");
     }
     
     // 初始化Recognizer
@@ -136,9 +155,11 @@ bool OCRPipeline::process(const cv::Mat& image,
         LOG_WARN("No text detected in the image");
         if (stats) {
             stats->detectionTime = det_time;
+            stats->classificationTime = 0.0;
             stats->recognitionTime = 0.0;
             stats->totalTime = det_time;
             stats->detectedBoxes = 0;
+            stats->rotatedBoxes = 0;
             stats->recognizedBoxes = 0;
             stats->recognitionRate = 0.0;
         }
@@ -147,8 +168,24 @@ bool OCRPipeline::process(const cv::Mat& image,
     
     LOG_INFO("Detected %zu text boxes", boxes.size());
     
-    // Step 2: Recognition
-    auto start_rec = std::chrono::high_resolution_clock::now();
+    // Debug: Print first 5 detection boxes
+    if (boxes.size() > 0) {
+        size_t print_count = std::min(size_t(5), boxes.size());
+        for (size_t i = 0; i < print_count; ++i) {
+            LOG_INFO("Box %zu: [%.1f,%.1f] [%.1f,%.1f] [%.1f,%.1f] [%.1f,%.1f]", 
+                     i,
+                     boxes[i].points[0].x, boxes[i].points[0].y,
+                     boxes[i].points[1].x, boxes[i].points[1].y,
+                     boxes[i].points[2].x, boxes[i].points[2].y,
+                     boxes[i].points[3].x, boxes[i].points[3].y);
+        }
+    }
+    
+    // Step 2: Crop text regions
+    std::vector<cv::Mat> crops;
+    std::vector<std::vector<cv::Point2f>> box_points_list;
+    crops.reserve(boxes.size());
+    box_points_list.reserve(boxes.size());
     
     for (size_t i = 0; i < boxes.size(); ++i) {
         // Convert TextBox points to vector<Point2f>
@@ -163,16 +200,66 @@ bool OCRPipeline::process(const cv::Mat& image,
             continue;
         }
         
+        crops.push_back(textImage);
+        box_points_list.push_back(box_points);
+    }
+    
+    LOG_INFO("Cropped %zu valid text regions", crops.size());
+    
+    // Step 3: Classification (optional)
+    auto start_cls = std::chrono::high_resolution_clock::now();
+    int rotated_count = 0;
+    
+    if (config_.useClassification && classifier_) {
+        LOG_INFO("Running text orientation classification...");
+        auto cls_results = classifier_->ClassifyBatch(crops);
+        
+        // Debug: Print first 5 classification results
+        size_t debug_count = std::min(size_t(5), cls_results.size());
+        for (size_t i = 0; i < debug_count; ++i) {
+            auto [label, confidence] = cls_results[i];
+            LOG_INFO("  Crop %zu: label='%s', conf=%.4f (threshold=%.2f)", 
+                     i, label.c_str(), confidence, config_.classifierConfig.threshold);
+        }
+        
+        for (size_t i = 0; i < crops.size() && i < cls_results.size(); ++i) {
+            auto [label, confidence] = cls_results[i];
+            
+            // Rotate if needed (label=="180" and confidence > threshold)
+            if (classifier_->NeedsRotation(label, confidence)) {
+                cv::rotate(crops[i], crops[i], cv::ROTATE_180);
+                rotated_count++;
+                LOG_INFO("Rotated crop %zu (label=%s, conf=%.3f)", 
+                         i, label.c_str(), confidence);
+            }
+        }
+        
+        LOG_INFO("Rotated %d / %zu text boxes", rotated_count, crops.size());
+    }
+    
+    auto end_cls = std::chrono::high_resolution_clock::now();
+    double cls_time = std::chrono::duration<double, std::milli>(end_cls - start_cls).count();
+    
+    // Step 4: Recognition
+    auto start_rec = std::chrono::high_resolution_clock::now();
+    
+    LOG_INFO("Starting recognition for %zu crops...", crops.size());
+    
+    for (size_t i = 0; i < crops.size(); ++i) {
         // Recognize text
-        auto [text, confidence] = recognizer_->Recognize(textImage);
+        auto [text, confidence] = recognizer_->Recognize(crops[i]);
         
         if (!text.empty()) {
+            LOG_INFO("  Crop %zu: text='%s', conf=%.4f ✓", 
+                     i, text.c_str(), confidence);
             PipelineOCRResult ocr_result;
-            ocr_result.box = box_points;
+            ocr_result.box = box_points_list[i];
             ocr_result.text = text;
             ocr_result.confidence = confidence;
             ocr_result.index = static_cast<int>(i);
             results.push_back(ocr_result);
+        } else {
+            LOG_INFO("  Crop %zu: Empty (filtered by threshold) ✗", i);
         }
     }
     
@@ -184,7 +271,7 @@ bool OCRPipeline::process(const cv::Mat& image,
     
     LOG_INFO("Recognized %zu / %zu boxes", results.size(), boxes.size());
     
-    // Step 3: Sort results
+    // Step 5: Sort results
     if (config_.sortResults && !results.empty()) {
         sortOCRResults(results);
         
@@ -194,15 +281,22 @@ bool OCRPipeline::process(const cv::Mat& image,
         }
     }
     
-    // Step 4: Statistics
+    // Step 6: Statistics
     if (stats) {
         stats->detectionTime = det_time;
+        stats->classificationTime = cls_time;
         stats->recognitionTime = rec_time;
         stats->totalTime = total_time;
         stats->detectedBoxes = static_cast<int>(boxes.size());
+        stats->rotatedBoxes = rotated_count;
         stats->recognizedBoxes = static_cast<int>(results.size());
         stats->recognitionRate = boxes.empty() ? 0.0 : 
             (static_cast<double>(results.size()) / boxes.size() * 100.0);
+    }
+    
+    // Print model usage statistics
+    if (recognizer_) {
+        recognizer_->PrintModelUsageStats();
     }
     
     return true;

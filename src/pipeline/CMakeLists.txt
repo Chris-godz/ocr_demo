@@ -6,6 +6,7 @@ add_library(ocr_pipeline
 
 target_link_libraries(ocr_pipeline
     ocr_detection
+    ocr_classification
     ocr_recognition
     ocr_common
     ocr_preprocessing
