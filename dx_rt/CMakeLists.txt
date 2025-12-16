@@ -20,7 +20,11 @@ endif()
 project(dxrt DESCRIPTION "DEEPX Runtime SDK")
 
 set(CMAKE_CXX_STANDARD_REQUIRED "ON")
+if (MSVC)
+set(CMAKE_CXX_STANDARD "17")
+else()
 set(CMAKE_CXX_STANDARD "14")
+endif()
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/release" CACHE PATH "Default install path" FORCE)
 endif()
@@ -56,13 +60,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED "ON")
 
 # global compile options
 if (MSVC)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /DWIN32 /D_WINDOWS /W3 /GR /EHsc")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /DWIN32 /D_WINDOWS /W3 /GR /EHsc")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /DWIN32 /D_WINDOWS /W3 /GR /EHsc /utf-8")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /DWIN32 /D_WINDOWS /W3 /GR /EHsc /utf-8")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS /DEBUG:FULL")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DEBUG:FULL")
 
     add_compile_options(-D_CRT_SECURE_NO_WARNINGS)
-
+    add_subdirectory(extern/windows_pdcurses)
     add_definitions(-D_AMD64_ -D_WIN64 -DWIN64)
 
     # Set the runtime library based on the option

@@ -12,4 +12,5 @@ target_link_libraries(benchmark
     ${OpenCV_LIBS}
     dxrt
     stdc++fs
+	spdlog
 )

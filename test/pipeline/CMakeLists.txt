@@ -11,4 +11,5 @@ target_link_libraries(test_pipeline_async
     ${OpenCV_LIBS}
     dxrt
     stdc++fs
+	spdlog
 )

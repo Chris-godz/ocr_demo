@@ -12,6 +12,18 @@
 #include "../include/render.h"
 #include "../include/utils.h"
 
+#ifdef _WIN32
+#include <direct.h>
+
+#define MKDIR_FUNC(path) _mkdir(path)
+#define IS_DIR(st) ((st).st_mode & _S_IFDIR)
+#define PATH_SEPARATOR '\\'
+#else
+#define MKDIR_FUNC(path) mkdir(path, 0755)
+#define IS_DIR(st) S_ISDIR((st).st_mode)
+#define PATH_SEPARATOR '/'
+#endif
+
 using std::string;
 using std::vector;
 using std::map;
@@ -20,17 +32,22 @@ using std::endl;
 
 bool ensureDirectoryExists(const string& path) 
 {
+    string platformPath = path;
+    if (PATH_SEPARATOR != '/') {
+        std::replace(platformPath.begin(), platformPath.end(), '/', PATH_SEPARATOR);
+    }
+
     // Check if directory already exists
     struct stat st;
-    if (stat(path.c_str(), &st) == 0) 
+    if (stat(platformPath.c_str(), &st) == 0)
     {
-        if (S_ISDIR(st.st_mode)) 
+        if (IS_DIR(st))
         {
             return true;  // Directory already exists
         }
         else 
         {
-            std::cerr << "Path exists but is not a directory: " << path << std::endl;
+            std::cerr << "Path exists but is not a directory: " << platformPath << std::endl;
             return false;
         }
     }
@@ -38,41 +55,56 @@ bool ensureDirectoryExists(const string& path)
     // Directory doesn't exist, need to create it recursively
     string currentPath;
     size_t pos = 0;
+    char separator = PATH_SEPARATOR;
     
+#ifdef _WIN32
+    // Handle drive letter on Windows
+    if (platformPath.length() >= 2 && platformPath[1] == ':' && (platformPath.length() == 2 || platformPath[2] == separator)) {
+        currentPath = platformPath.substr(0, 3);
+        pos = 3;
+    }
+    else
+#endif
     // Skip leading slash for absolute paths
-    if (!path.empty() && path[0] == '/') 
+    if (!platformPath.empty() && platformPath[0] == '/')
     {
         currentPath = "/";
         pos = 1;
     }
     
-    while (pos < path.length()) 
+    while (pos < platformPath.length())
     {
-        size_t nextSlash = path.find('/', pos);
-        if (nextSlash == string::npos) 
+        size_t nextSeparator = platformPath.find(separator, pos);
+        if (nextSeparator == string::npos)
         {
-            nextSlash = path.length();
+            nextSeparator = platformPath.length();
         }
         
-        currentPath += path.substr(pos, nextSlash - pos);
+        currentPath += platformPath.substr(pos, nextSeparator - pos);
         
         // Try to create this level of directory
         if (stat(currentPath.c_str(), &st) != 0) 
         {
             // Directory doesn't exist, create it
-            if (mkdir(currentPath.c_str(), 0755) != 0 && errno != EEXIST) 
+            if (MKDIR_FUNC(currentPath.c_str()) != 0)
             {
-                std::cerr << "Error creating directory " << currentPath 
-                         << ": " << std::strerror(errno) << std::endl;
-                return false;
+                if (errno != EEXIST)
+                {
+                    std::cerr << "Error creating directory " << currentPath
+                        << ": " << std::strerror(errno) << std::endl;
+                    return false;
+                }
             }
-            std::cout << "Created directory: " << currentPath << std::endl;
+            else
+            {
+                std::cout << "Created directory: " << currentPath << std::endl;
+            }
         }
         
-        if (nextSlash < path.length()) 
+        if (nextSeparator < platformPath.length())
         {
-            currentPath += "/";
-            pos = nextSlash + 1;
+            currentPath += separator;
+            pos = nextSeparator + 1;
         } 
         else 
         {
@@ -334,7 +366,7 @@ void Reporter::makeReport()
         report_file << "document.getElementById('fps-plot-" << i << "').style.height = barPlotHeight + 'px';";
         report_file << "const fpsLayout_" << i << " = { "
                     << "margin: { l: 250, r: 40, t: 40, b: 50 }, font: { size: 12, color: '#333' }, bargap: 0.15, "
-                    << "xaxis: { title: 'FPS (Higher is Better)', gridcolor: '#e9ecef', range: [0, maxFpsValue] }, " // range 속성 추가
+                    << "xaxis: { title: 'FPS (Higher is Better)', gridcolor: '#e9ecef', range: [0, maxFpsValue] }, "
                     << "yaxis: { automargin: true, tickfont: {size: 10}, autorange: 'reversed'}, "
                     << "title: { text: '" << chartTitle << "' }, "
                     << "annotations: [] };";
@@ -476,7 +508,7 @@ void Reporter::makeReport()
     report_file.close();
 }
 
-void Reporter::makeData(const string& rtVersion, const string& ddVersion, const string& pdVersion)
+void Reporter::makeData(const string& rtVersion, const string& fwVersion, const string& ddVersion, const string& pdVersion)
 {
 
     if (_results.empty()) {
@@ -498,11 +530,12 @@ void Reporter::makeData(const string& rtVersion, const string& ddVersion, const 
     } else {
         csvFile.seekp(0, std::ios::end);
         if (csvFile.tellp() == 0) {
-            csvFile << "Runtime Version,Device Driver Version,PCIe Driver Version,Model Name,FPS,NPU Inference Time Mean,NPU Inference Time SD,NPU Inference Time CV,Latency Mean,Latency SD,Latency CV\n";
+            csvFile << "Runtime Version, Firmware Version, Device Driver Version,PCIe Driver Version,Model Name,FPS,NPU Inference Time Mean,NPU Inference Time SD,NPU Inference Time CV,Latency Mean,Latency SD,Latency CV\n";
         }
 
         for (const auto& result : _results) {
             csvFile << rtVersion << ","
+                    << fwVersion << ","
                     << ddVersion << ","
                     << pdVersion << ","
                     << result.modelName.first << ","
@@ -525,6 +558,7 @@ void Reporter::makeData(const string& rtVersion, const string& ddVersion, const 
         jsonFile << "{\n";
 
         jsonFile << "  \"Runtime Version\": \"" << rtVersion << "\",\n";
+        jsonFile << "  \"Firmware Version\": \"" << fwVersion << "\",\n";
         jsonFile << "  \"Device Driver Version\": \"" << ddVersion << "\",\n";
         jsonFile << "  \"PCIe Driver Version\": \"" << pdVersion << "\",\n";
 

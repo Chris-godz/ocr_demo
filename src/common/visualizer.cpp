@@ -73,18 +73,9 @@ cv::Mat Visualizer::drawOCRResults(const cv::Mat& image,
             cv::Point text_pos(static_cast<int>(box.points[0].x), 
                              static_cast<int>(box.points[0].y) - 5);
             
-            // 绘制文本背景
-            int baseline = 0;
-            cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX,
-                                                 0.6, 2, &baseline);
-            cv::rectangle(vis, 
-                         text_pos + cv::Point(0, baseline),
-                         text_pos + cv::Point(text_size.width, -text_size.height),
-                         cv::Scalar(0, 0, 0), cv::FILLED);
-
-            // 绘制文本
-            cv::putText(vis, label, text_pos, cv::FONT_HERSHEY_SIMPLEX,
-                       0.6, cv::Scalar(255, 255, 255), 2);
+            // 使用FreeType绘制中文文本
+            std::string font_path = "engine/fonts/simfang.ttf";
+            putTextUTF8(vis, label, text_pos, font_path, 20, cv::Scalar(0, 255, 0));
         }
     }
 

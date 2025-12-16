@@ -174,16 +174,19 @@ bool OCRPipeline::initialize() {
         }
 
         // Push to Recognition Queue (non-blocking to avoid deadlock)
-        if (recQueue_) {
+        // Check both running_ and recQueue_ existence atomically
+        if (running_ && recQueue_) {
             size_t boxCount = boxes.size();
             RecognitionTask task{image, std::move(boxes), taskId};
             // Use try_push with longer timeout to avoid blocking callback threads
-            while (running_ && !recQueue_->try_push(std::move(task), std::chrono::milliseconds(500))) {
+            while (running_ && recQueue_ && !recQueue_->try_push(std::move(task), std::chrono::milliseconds(500))) {
                 LOG_WARN("Recognition queue full, waiting... id={}", taskId);
             }
-            if (running_) {
+            if (running_ && recQueue_) {
                 LOG_INFO("Pushed task to recognition queue, id={}, boxes={}", taskId, boxCount);
             }
+        } else {
+            LOG_WARN("Pipeline stopping, discarding detection callback for taskId={}", taskId);
         }
     });
 

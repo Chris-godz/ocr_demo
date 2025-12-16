@@ -8,6 +8,7 @@ target_link_libraries(test_detector
         ocr_common
         ${OpenCV_LIBS}
         dxrt
+	spdlog
 )
 
 target_include_directories(test_detector 

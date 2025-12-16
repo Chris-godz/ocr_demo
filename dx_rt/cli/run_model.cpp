@@ -14,12 +14,14 @@
 #include <set>
 #include <algorithm>
 #include <iostream>
+#include <fstream>
 #include <memory>
 
 #include "dxrt/dxrt_api.h"
 #include "dxrt/extern/cxxopts.hpp"
 #include "dxrt/filesys_support.h"
 #include "dxrt/profiler.h"
+#include "dxrt/runtime_event_dispatcher.h"
 
 
 #define APP_NAME "DXRT " DXRT_VERSION " run_model"
@@ -43,39 +45,64 @@ static int bounding = 0;
 #ifdef __linux__
 #include <sys/utsname.h>
 #include <sys/sysinfo.h>
+#include <cstdio>
+#include <array>
+
 void printCpuInfo() {
     std::cout << "--- CPU Information ---" << std::endl;
-    std::ifstream cpuinfo("/proc/cpuinfo");
+    
+    // Use popen to execute lscpu command
+    std::array<char, 128> buffer;
+    std::string result;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("lscpu 2>/dev/null", "r"), pclose);
+    
+    if (!pipe) {
+        std::cerr << "... No CPU Info." << std::endl;
+        return;
+    }
+    
+    // Read the output of lscpu
+    while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
+        result += buffer.data();
+    }
+    
+    if (result.empty()) {
+        std::cerr << "... No CPU Info." << std::endl;
+        return;
+    }
+    
+    // Parse and display relevant information
+    std::istringstream stream(result);
     std::string line;
+    bool architectureFound = false;
     bool modelNameFound = false;
     bool cpuCoresFound = false;
     bool vendorIdFound = false;
-
-    if (cpuinfo.is_open()) {
-        while (getline(cpuinfo, line)) {
-            // model name
-            if (!modelNameFound && line.find("model name") != std::string::npos) {
-                std::cout << "  Model Name: " << line.substr(line.find(":") + 2) << std::endl;
-                modelNameFound = true;
-            }
-            // number of CPU cores
-            if (!cpuCoresFound && line.find("cpu cores") != std::string::npos) {
-                std::cout << "  CPU Cores: " << line.substr(line.find(":") + 2) << std::endl;
-                cpuCoresFound = true;
-            }
-            // vendor ID
-            if (!vendorIdFound && line.find("vendor_id") != std::string::npos) {
-                std::cout << "  Vendor ID: " << line.substr(line.find(":") + 2) << std::endl;
-                vendorIdFound = true;
-            }
-
-            if (modelNameFound && cpuCoresFound && vendorIdFound) {
-                break;
-            }
+    
+    while (std::getline(stream, line)) {
+        // Architecture
+        if (!architectureFound && line.find("Architecture:") != std::string::npos) {
+            std::cout << "  " << line << std::endl;
+            architectureFound = true;
         }
-        cpuinfo.close();
-    } else {
-        // std::cerr << "Error: Could not open /proc/cpuinfo" << std::endl;
+        // Model name
+        else if (!modelNameFound && line.find("Model name:") != std::string::npos) {
+            std::cout << "  " << line << std::endl;
+            modelNameFound = true;
+        }
+        // CPU(s) - total number of logical CPUs
+        else if (!cpuCoresFound && line.find("CPU(s):") != std::string::npos && line.find("NUMA") == std::string::npos && line.find("On-line") == std::string::npos) {
+            std::cout << "  " << line << std::endl;
+            cpuCoresFound = true;
+        }
+        // Vendor ID
+        else if (!vendorIdFound && line.find("Vendor ID:") != std::string::npos) {
+            std::cout << "  " << line << std::endl;
+            vendorIdFound = true;
+        }
+    }
+    
+    if (!modelNameFound && !architectureFound && !cpuCoresFound) {
         std::cerr << "... No CPU Info." << std::endl;
     }
 }
@@ -91,9 +118,6 @@ void printArchitectureInfo() {
         std::cout << "  Release:     " << buffer.release << std::endl;
         std::cout << "  Version:     " << buffer.version << std::endl;
         std::cout << "  Machine:     " << buffer.machine << std::endl;  // architecture information
-        // perror("uname"); // error message if it fail
-        // std::cerr << "Error: Could not get system architecture info." << std::endl;
-        std::cerr << "No System Architecture Info." << std::endl;
     }
 }
 
@@ -424,6 +448,9 @@ int main(int argc, char *argv[])
     cxxopts::Options options("run_model", APP_NAME);
     options.add_options()
         ("m, model", "Model file (.dxnn)" , cxxopts::value<string>(modelFile))
+        // Disable until dx_sim support is ready
+        //("i, input", "Input data file", cxxopts::value<string>(inputFile))
+        //("o, output", "Output data file", cxxopts::value<string>(outputFile)->default_value("output.bin"))
         ("b, benchmark", "Perform a benchmark test (Maximum throughput)\n(This is the default mode,\n if --single or --fps > 0 are not specified)", cxxopts::value<bool>(benchmark)->default_value("false"))
         ("s, single", "Perform a single run test\n(Sequential single-input inference on a single-core)", cxxopts::value<bool>(single)->default_value("false"))
         ("v, verbose", "Shows NPU Processing Time and Latency", cxxopts::value<bool>(verbose)->default_value("false"))
@@ -473,6 +500,33 @@ int main(int argc, char *argv[])
         cout << options.help({""}) << endl;
         exit(1);
     }
+
+    std::atomic<bool> critical_error{false};
+
+    // Runtime Event dispatching
+    dxrt::RuntimeEventDispatcher::GetInstance().RegisterEventHandler(
+        [&critical_error](dxrt::RuntimeEventDispatcher::LEVEL level, 
+            dxrt::RuntimeEventDispatcher::TYPE type, 
+            dxrt::RuntimeEventDispatcher::CODE code, const std::string& message, const std::string& timestamp) {
+            std::cout << "[run-model] level=" << std::to_string(static_cast<int>(level))
+                        << ", type=" << std::to_string(static_cast<int>(type))
+                        << ", code=" << std::to_string(static_cast<int>(code))
+                        << ", message: " << message
+                        << ", timestamp: " << timestamp << std::endl;
+
+            if (level == dxrt::RuntimeEventDispatcher::LEVEL::CRITICAL )
+            {
+                if (type == dxrt::RuntimeEventDispatcher::TYPE::DEVICE_MEMORY &&
+                code == dxrt::RuntimeEventDispatcher::CODE::MEMORY_OVERFLOW) {
+                    std::cerr << "Terminating program due to critical NPU memory error." << std::endl;
+                    exit(-1);
+                }
+                critical_error.store(true);
+            }
+        }
+    );
+    dxrt::RuntimeEventDispatcher::GetInstance().SetCurrentLevel(
+        dxrt::RuntimeEventDispatcher::LEVEL::WARNING);
 
     // always showing the model information
     dxrt::Configuration::GetInstance().SetEnable(dxrt::Configuration::ITEM::SHOW_MODEL_INFO, true);
@@ -755,5 +809,5 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    return 0;
+    return critical_error ? -1 : 0;
 }
