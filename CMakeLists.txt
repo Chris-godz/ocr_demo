@@ -56,6 +56,9 @@ include(cmake/BuildOpenCV.cmake)
 # Add 3rd-party libraries
 add_subdirectory(3rd-party/json)
 
+# Add spdlog (logging library)
+add_subdirectory(3rd-party/spdlog)
+
 # Suppress warnings from 3rd-party libraries
 set(CMAKE_CXX_FLAGS_BACKUP "${CMAKE_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")  # Disable all warnings
@@ -78,6 +81,15 @@ add_subdirectory(src/classification)
 add_subdirectory(src/recognition)
 add_subdirectory(src/pipeline)
 # add_subdirectory(src/ocr_engine)
+
+# ========================================
+# Server Subdirectory (HTTP API Server)
+# ========================================
+option(BUILD_SERVER "Build HTTP API server" ON)
+if(BUILD_SERVER)
+    message(STATUS "Building HTTP API server")
+    add_subdirectory(server)
+endif()
 
 # ========================================
 # Test Subdirectory

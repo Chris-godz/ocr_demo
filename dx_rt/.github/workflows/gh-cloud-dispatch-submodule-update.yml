@@ -1,0 +1,19 @@
+# LEAF_REPO/.github/workflows/gh-cloud-dispatch-submodule-update.yml
+name: dx-runtime-dispatch-update
+run-name: dispatch submodule update of dx-runtime by ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - staging
+
+jobs:
+  call_dispatch_update_submodule:
+    uses: DEEPX-AI/do_workflows-central/.github/workflows/update-submodule.yml@main
+    with:
+      source_child_repo: "dx_rt"
+      target_parent_repo: "DEEPX-AI/dx-runtime"
+      target_branch: "staging"
+    secrets:
+      token: ${{ secrets.GC_DCI_TOKEN }}

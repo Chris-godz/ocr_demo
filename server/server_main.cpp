@@ -1,0 +1,233 @@
+#include "ocr_handler.h"
+#include "json_response.h"
+#include "common/logger.hpp"
+#include <crow.h>
+#include <nlohmann/json.hpp>
+#include <memory>
+#include <string>
+#include <filesystem>
+#include <getopt.h>
+
+using json = nlohmann::json;
+using namespace ocr_server;
+
+/**
+ * @brief 加载OCR Pipeline配置
+ */
+ocr::OCRPipelineConfig LoadDefaultConfig() {
+    ocr::OCRPipelineConfig config;
+    
+    // 注意：实际的配置结构与之前假设的不同
+    // 这里只设置最基本的配置，其他使用默认值
+    
+    // Detection配置
+    // config.detectorConfig 使用默认值
+    
+    // Document Preprocessing配置
+    config.docPreprocessingConfig.useOrientation = true;
+    config.docPreprocessingConfig.useUnwarping = true;
+    
+    // Pipeline配置
+    config.useDocPreprocessing = true;
+    config.useClassification = true;
+    config.enableVisualization = true;
+    config.sortResults = true;
+    
+    return config;
+}
+
+/**
+ * @brief 认证中间件（简单的Token验证）
+ */
+struct AuthMiddleware : crow::ILocalMiddleware {
+    struct context {};
+    
+    void before_handle(crow::request& req, crow::response& res, context&) {
+        // 获取Authorization header
+        auto auth_header = req.get_header_value("Authorization");
+        
+        // 简单验证：检查是否以"token "开头
+        if (auth_header.empty() || auth_header.find("token ") != 0) {
+            LOG_WARN("Unauthorized request from {}", req.remote_ip_address);
+            
+            json error_response = JsonResponseBuilder::BuildErrorResponse(
+                ErrorCode::UNAUTHORIZED, "Missing or invalid Authorization token");
+            
+            res.code = 401;
+            res.set_header("Content-Type", "application/json");
+            res.write(error_response.dump());
+            res.end();
+            return;
+        }
+        
+        // 提取token（可以在这里进行更复杂的验证）
+        std::string token = auth_header.substr(6);  // 跳过"token "
+        
+        // TODO: 在这里可以添加真实的token验证逻辑
+        // 例如：查询数据库、验证JWT等
+        
+        LOG_INFO("Authenticated request from {} with token: {}...", 
+                 req.remote_ip_address, token.substr(0, 8));
+    }
+    
+    void after_handle(crow::request&, crow::response&, context&) {
+        // 后处理（可选）
+    }
+};
+
+int main(int argc, char* argv[]) {
+    // 初始化日志
+    LOG_INFO("========== DeepX OCR Server Starting ==========");
+    
+    // 默认参数
+    int port = 8080;
+    int threads = 4;
+    std::string vis_dir = "output/vis";
+    
+    // 定义长选项
+    static struct option long_options[] = {
+        {"port",     required_argument, 0, 'p'},
+        {"threads",  required_argument, 0, 't'},
+        {"vis-dir",  required_argument, 0, 'v'},
+        {"help",     no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+    
+    // 解析命令行参数
+    int opt;
+    int option_index = 0;
+    while ((opt = getopt_long(argc, argv, "p:t:v:h", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'p':
+                port = std::stoi(optarg);
+                break;
+            case 't':
+                threads = std::stoi(optarg);
+                break;
+            case 'v':
+                vis_dir = optarg;
+                break;
+            case 'h':
+                std::cout << "Usage: " << argv[0] << " [options]\n"
+                          << "Options:\n"
+                          << "  -p, --port <port>        Server port (default: 8080)\n"
+                          << "  -t, --threads <num>      Number of threads (default: 4)\n"
+                          << "  -v, --vis-dir <path>     Visualization output directory (default: output/vis)\n"
+                          << "  -h, --help               Show this help message\n";
+                return 0;
+            default:
+                std::cerr << "Use -h or --help for usage information\n";
+                return 1;
+        }
+    }
+    
+    // 创建可视化输出目录
+    std::filesystem::create_directories(vis_dir);
+    LOG_INFO("Visualization output directory: {}", vis_dir);
+    
+    // 加载OCR Pipeline配置
+    LOG_INFO("Loading OCR Pipeline configuration...");
+    auto pipeline_config = LoadDefaultConfig();
+    pipeline_config.Show();
+    
+    // 创建OCR Handler
+    LOG_INFO("Initializing OCR Handler...");
+    auto ocr_handler = std::make_shared<OCRHandler>(
+        pipeline_config, vis_dir, "/static/vis");
+    
+    // 创建Crow应用（带认证中间件）
+    crow::App<AuthMiddleware> app;
+    
+    // 健康检查接口
+    CROW_ROUTE(app, "/health")
+    ([]() {
+        json response;
+        response["status"] = "healthy";
+        response["service"] = "DeepX OCR Server";
+        response["version"] = "1.0.0";
+        return crow::response(response.dump());
+    });
+    
+    // OCR识别接口
+    CROW_ROUTE(app, "/ocr").methods(crow::HTTPMethod::POST)
+    ([ocr_handler](const crow::request& req) {
+        LOG_INFO("Received OCR request from {}", req.remote_ip_address);
+        
+        try {
+            // 解析JSON请求
+            json request_json = json::parse(req.body);
+            
+            // 转换为OCRRequest对象
+            auto ocr_request = OCRRequest::FromJson(request_json);
+            
+            // 处理请求
+            json response_json;
+            int status_code = ocr_handler->HandleRequest(ocr_request, response_json);
+            
+            // 返回响应
+            crow::response res(status_code, response_json.dump());
+            res.set_header("Content-Type", "application/json");
+            return res;
+            
+        } catch (const json::exception& e) {
+            LOG_ERROR("JSON parse error: {}", e.what());
+            json error_response = JsonResponseBuilder::BuildErrorResponse(
+                ErrorCode::INVALID_PARAMETER, 
+                std::string("Invalid JSON format: ") + e.what());
+            
+            crow::response res(400, error_response.dump());
+            res.set_header("Content-Type", "application/json");
+            return res;
+            
+        } catch (const std::exception& e) {
+            LOG_ERROR("Unexpected error: {}", e.what());
+            json error_response = JsonResponseBuilder::BuildErrorResponse(
+                ErrorCode::INTERNAL_ERROR,
+                std::string("Internal server error: ") + e.what());
+            
+            crow::response res(500, error_response.dump());
+            res.set_header("Content-Type", "application/json");
+            return res;
+        } catch (...) {
+            LOG_ERROR("Unknown exception occurred");
+            json error_response = JsonResponseBuilder::BuildErrorResponse(
+                ErrorCode::INTERNAL_ERROR,
+                "Internal server error: unknown exception");
+            
+            crow::response res(500, error_response.dump());
+            res.set_header("Content-Type", "application/json");
+            return res;
+        }
+    });
+    
+    // 静态文件服务（用于访问可视化图片）
+    CROW_ROUTE(app, "/static/vis/<string>")
+    ([vis_dir](std::string filename) {
+        std::string filepath = vis_dir + "/" + filename;
+        
+        // 检查文件是否存在
+        if (!std::filesystem::exists(filepath)) {
+            LOG_WARN("Visualization file not found: {}", filepath);
+            return crow::response(404, "File not found");
+        }
+        
+        // 读取并返回文件
+        auto res = crow::response();
+        res.set_static_file_info(filepath);
+        return res;
+    });
+    
+    // 启动服务器
+    LOG_INFO("Starting server on port {} with {} threads...", port, threads);
+    LOG_INFO("Endpoints:");
+    LOG_INFO("  - POST   /ocr           (OCR Recognition)");
+    LOG_INFO("  - GET    /health        (Health Check)");
+    LOG_INFO("  - GET    /static/vis/*  (Visualization Images)");
+    LOG_INFO("===============================================");
+    
+    app.port(port)
+       .concurrency(threads)
+       .run();
+    
+    return 0;
+}

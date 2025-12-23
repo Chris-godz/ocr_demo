@@ -1,21 +1,27 @@
+[submodule "SDK"]
+	path = SDK
+	url = https://github.com/DEEPX-AI/dx-runtime.git
+[submodule "3rd-party/opencv"]
+	path = 3rd-party/opencv
+	url = https://github.com/opencv/opencv.git
 [submodule "3rd-party/json"]
 	path = 3rd-party/json
 	url = https://github.com/nlohmann/json.git
 [submodule "3rd-party/clipper2"]
 	path = 3rd-party/clipper2
 	url = https://github.com/AngusJohnson/Clipper2.git
-[submodule "3rd-party/FlameGraph"]
-	path = 3rd-party/FlameGraph
-	url = https://github.com/brendangregg/FlameGraph.git
-[submodule "3rd-party/spdlog"]
-	path = 3rd-party/spdlog
-	url = https://github.com/gabime/spdlog.git
-[submodule "3rd-party/opencv"]
-	path = 3rd-party/opencv
-	url = https://github.com/opencv/opencv.git
 [submodule "3rd-party/opencv_contrib"]
 	path = 3rd-party/opencv_contrib
 	url = https://github.com/opencv/opencv_contrib.git
+[submodule "3rd-party/spdlog"]
+	path = 3rd-party/spdlog
+	url = https://github.com/gabime/spdlog.git
 [submodule "dx_rt"]
 	path = dx_rt
 	url = https://github.com/DEEPX-AI/dx_rt.git
+[submodule "3rd-party/crow"]
+	path = 3rd-party/crow
+	url = https://github.com/CrowCpp/Crow.git
+[submodule "3rd-party/cpp-base64"]
+	path = 3rd-party/cpp-base64
+	url = https://github.com/ReneNyffenegger/cpp-base64.git

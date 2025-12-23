@@ -159,12 +159,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 git_token
-
+.temp/
 build_Release/
-build_Debug/
-build/
-
-# VS Code
-.vscode/
-engine/model_files
-logs/

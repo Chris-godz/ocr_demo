@@ -22,7 +22,6 @@ target_link_libraries(test_recognizer
         ${OpenCV_LIBS}
         dxrt
 	spdlog
-	fmt
 )
 
 # Include directories
@@ -50,7 +49,6 @@ target_link_libraries(test_recognizer_mobile
         ${OpenCV_LIBS}
         dxrt
 	spdlog
-	fmt
 )
 
 # Include directories

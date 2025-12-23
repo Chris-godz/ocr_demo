@@ -12,5 +12,4 @@ target_link_libraries(test_pipeline_async
     dxrt
     stdc++fs
 	spdlog
-	fmt
 )

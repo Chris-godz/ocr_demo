@@ -13,5 +13,4 @@ target_link_libraries(benchmark
     dxrt
     stdc++fs
 	spdlog
-	fmt
 )
