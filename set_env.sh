@@ -20,7 +20,11 @@ if [ "$3" = "-1" ]; then
     unset DXRT_DYNAMIC_CPU_THREAD
     echo "DXRT_DYNAMIC_CPU_THREAD unset"
 elif [ -n "$3" ]; then
-    export DXRT_DYNAMIC_CPU_THREAD=$3
+    if [ "$3" = "1" ]; then
+        export DXRT_DYNAMIC_CPU_THREAD=ON
+    else
+        export DXRT_DYNAMIC_CPU_THREAD=OFF
+    fi
     echo "DXRT_DYNAMIC_CPU_THREAD=$DXRT_DYNAMIC_CPU_THREAD"
 fi
 if [ "$4" = "-1" ]; then
