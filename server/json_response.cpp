@@ -25,13 +25,16 @@ json JsonResponseBuilder::BuildSuccessResponse(
     response["errorCode"] = ErrorCode::SUCCESS;
     response["errorMsg"] = "Success";
     
-    // 构建ocrResults数组
     json ocr_results = json::array();
     for (const auto& result : results) {
-        ocr_results.push_back(ConvertOCRResultToJson(result, vis_image_url));
+        ocr_results.push_back(ConvertOCRResultToJson(result));
     }
     
     response["result"]["ocrResults"] = ocr_results;
+    
+    if (!vis_image_url.empty()) {
+        response["result"]["ocrImage"] = vis_image_url;
+    }
     
     return response;
 }

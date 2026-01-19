@@ -1,15 +1,37 @@
 # DeepX OCR Server
 
-基于 Crow 框架的高性能 OCR HTTP 服务，支持并发请求处理，支持图像和 PDF 文件输入。
+<p align="center">
+  <img src="https://img.shields.io/badge/Framework-Crow-blue.svg" alt="Crow">
+  <img src="https://img.shields.io/badge/PDF-PDFium-orange.svg" alt="PDFium">
+  <img src="https://img.shields.io/badge/WebUI-Gradio-green.svg" alt="Gradio">
+</p>
 
-## 编译
+基于 **Crow** 框架的高性能 OCR HTTP 服务，支持并发请求处理，支持图像和 PDF 文件输入。
+
+---
+
+## 📖 目录
+
+- [快速开始](#-快速开始)
+- [命令行参数](#-命令行参数)
+- [API 接口](#-api-接口)
+- [Web UI](#-web-ui)
+- [基准测试](#-基准测试)
+- [单元测试](#-单元测试)
+- [目录结构](#-目录结构)
+
+---
+
+## ⚡ 快速开始
+
+### 1. 编译项目
 
 ```bash
 cd /home/deepx/Desktop/ocr_demo
 bash build.sh
 ```
 
-## 启动
+### 2. 启动服务
 
 ```bash
 # 设置环境变量
@@ -20,16 +42,38 @@ cd build_Release
 LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/../3rd-party/pdfium/lib ./bin/ocr_server [选项]
 ```
 
-### 命令行参数
+### 3. 验证服务
+
+```bash
+curl http://localhost:8080/health
+# 响应: {"status": "healthy", "service": "DeepX OCR Server", "version": "1.0.0"}
+```
+
+---
+
+## 🛠️ 命令行参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `-p, --port` | 服务端口 | 8080 |
 | `-t, --threads` | HTTP 线程数 | 4 |
 | `-v, --vis-dir` | 可视化输出目录 | output/vis |
-| `-h, --help` | 帮助 | - |
+| `-m, --model` | 模型类型：`server` 或 `mobile` | server |
+| `-h, --help` | 显示帮助 | - |
 
-## API
+**示例**:
+
+```bash
+# 使用 mobile 模型，端口 9090
+./bin/ocr_server --port 9090 --model mobile
+
+# 使用 8 个 HTTP 线程
+./bin/ocr_server --threads 8
+```
+
+---
+
+## 📡 API 接口
 
 ### POST /ocr
 
@@ -42,24 +86,27 @@ Content-Type: application/json
 Authorization: token <任意字符串>
 ```
 
-**请求体**
+**请求参数**
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| file | string | 是 | - | Base64 编码的图像/PDF 或文件 URL |
-| fileType | int | 否 | 1 | 文件类型：1=图像，0=PDF |
-| useDocOrientationClassify | bool | 否 | false | 启用文档方向分类 |
-| useDocUnwarping | bool | 否 | false | 启用文档扭曲矫正 |
-| useTextlineOrientation | bool | 否 | false | 启用文本行方向矫正 |
-| textDetThresh | float | 否 | 0.3 | 检测像素阈值 [0.0-1.0] |
-| textDetBoxThresh | float | 否 | 0.6 | 检测框阈值 [0.0-1.0] |
-| textDetUnclipRatio | float | 否 | 1.5 | 检测框扩张系数 [1.0-3.0] |
-| textRecScoreThresh | float | 否 | 0.0 | 识别置信度阈值 [0.0-1.0] |
-| visualize | bool | 否 | false | 生成可视化结果图像 |
-| pdfDpi | int | 否 | 150 | PDF 渲染 DPI（仅 fileType=0 时有效，范围 72-300） |
-| pdfMaxPages | int | 否 | 10 | PDF 最大处理页数（仅 fileType=0 时有效，范围 1-100） |
+| file | string | ✅ | - | Base64 编码的图像/PDF 或文件 URL |
+| fileType | int | | 1 | 文件类型：1=图像，0=PDF |
+| useDocOrientationClassify | bool | | false | 启用文档方向分类 |
+| useDocUnwarping | bool | | false | 启用文档扭曲矫正 |
+| useTextlineOrientation | bool | | false | 启用文本行方向矫正 |
+| textDetThresh | float | | 0.3 | 检测像素阈值 [0.0-1.0] |
+| textDetBoxThresh | float | | 0.6 | 检测框阈值 [0.0-1.0] |
+| textDetUnclipRatio | float | | 1.5 | 检测框扩张系数 [1.0-3.0] |
+| textRecScoreThresh | float | | 0.0 | 识别置信度阈值 [0.0-1.0] |
+| visualize | bool | | false | 生成可视化结果图像 |
+| pdfDpi | int | | 150 | PDF 渲染 DPI（仅 fileType=0，范围 72-300） |
+| pdfMaxPages | int | | 10 | PDF 最大处理页数（仅 fileType=0，范围 1-100） |
 
-**图像 OCR 响应示例 (fileType=1)**
+<details>
+<summary><b>📋 响应示例</b></summary>
+
+**图像 OCR 响应 (fileType=1)**
 
 ```json
 {
@@ -84,7 +131,7 @@ Authorization: token <任意字符串>
 }
 ```
 
-**PDF OCR 响应示例 (fileType=0)**
+**PDF OCR 响应 (fileType=0)**
 
 ```json
 {
@@ -121,7 +168,10 @@ Authorization: token <任意字符串>
 }
 ```
 
-**错误码**
+</details>
+
+<details>
+<summary><b>⚠️ 错误码</b></summary>
 
 | errorCode | HTTP 状态码 | 说明 |
 |-----------|-------------|------|
@@ -139,6 +189,8 @@ Authorization: token <任意字符串>
 | 2002 | 503 | 内存分配失败 |
 | 2003 | 504 | PDF 渲染超时 |
 | 3001 | 401 | 认证失败 |
+
+</details>
 
 ### PDF 处理说明
 
@@ -163,91 +215,245 @@ Authorization: token <任意字符串>
 
 访问可视化结果图像。
 
-## 基准测试
+---
 
-### 图像 API 基准测试
+## 🌐 Web UI
 
-使用 `benchmark/run.sh` 进行性能测试：
+基于 **Gradio** 的可视化 Web 界面，支持图像和 PDF 的 OCR 在线演示。
+
+### ✨ 功能特性
+
+- 🖼️ **多格式支持**: JPG, PNG, PDF
+- 🔄 **图像处理**: 方向矫正、扭曲矫正、文本行方向矫正
+- ⚙️ **参数调整**: OCR 检测/识别阈值实时调整
+- 📄 **PDF 处理**: 可配置 DPI (72-300) 和最大页数 (1-100)
+- 📊 **结果展示**: 可视化图像 + JSON 数据 + ZIP 下载
+- 📱 **响应式 UI**: 侧边栏折叠、移动端适配
+
+### 🚀 快速启动
+
+```bash
+cd server/webui
+
+# 创建虚拟环境（首次使用）
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 启动 Web UI（确保 OCR Server 已运行）
+python app.py
+```
+
+### 📍 访问地址
+
+```
+http://localhost:7860
+```
+
+### 🔑 环境变量
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `API_URL` | OCR API 端点 | `http://localhost:8080/ocr` |
+| `API_BASE` | OCR 服务器基础 URL | `http://localhost:8080` |
+| `API_TOKEN` | API 认证令牌 | `deepx_token` |
+
+**示例**:
+
+```bash
+export API_URL="http://192.168.1.100:8080/ocr"
+export API_BASE="http://192.168.1.100:8080"
+python app.py
+```
+
+详细说明请参考 [webui/README.md](webui/README.md)。
+
+---
+
+## 🧪 基准测试
+
+使用 `benchmark/run.sh` 统一入口进行性能测试，支持 **Image OCR**、**PDF OCR** 和 **压力测试** 三种模式。
+
+### 📊 测试模式
+
+| 模式 | 说明 | 命令 |
+|------|------|------|
+| `image` | Image OCR 测试 (Python Async) | `./run.sh --mode image` |
+| `pdf` | PDF OCR 测试 (Python Async) | `./run.sh --mode pdf` |
+| `stress` | 高并发压力测试 (C++) | `./run.sh --mode stress` |
+| `all` | 运行所有测试 | `./run.sh --mode all` |
+
+### 🛠️ 通用参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-p, --port` | 服务器端口 | 8080 |
+| `-m, --model` | 模型类型: `server` / `mobile` | server |
+| `-r, --runs` | 每个测试项运行次数 | 1 |
+| `-c, --concurrency` | 并发数 | 1 |
+| `-s, --skip-server` | 跳过启动服务器（使用已运行的服务） | - |
+| `-k, --keep-server` | 测试完成后保持服务器运行 | - |
+| `-i, --images` | 测试图片目录 | `../../images` |
+| `--pdfs` | 测试 PDF 目录 | `../pdf_file` |
+| `--dpi` | PDF 渲染 DPI | 150 |
+| `--max-pages` | PDF 最大处理页数 | 100 |
+| `-h, --help` | 显示帮助 | - |
+
+### 📝 使用示例
 
 ```bash
 cd server/benchmark
 
-# 串行模式测试（默认）
+# Image OCR 测试（默认模式）
 ./run.sh
 
-# 并发模式测试（4 并发）
-./run.sh -c 4
+# Image OCR 测试，4 并发
+./run.sh --mode image -c 4
 
-# 指定运行次数
-./run.sh -r 3
+# PDF OCR 测试，指定 DPI
+./run.sh --mode pdf --dpi 200 --max-pages 50
 
-# 查看帮助
-./run.sh -h
+# 压力测试，16 并发，每项 5 次
+./run.sh --mode stress -c 16 -r 5
+
+# 使用已运行的服务器运行所有测试
+./run.sh --mode all -s
+
+# 运行完成后保持服务器
+./run.sh --mode image -k
 ```
 
-### PDF OCR 自动化测试
+### 🔀 并发模式说明
 
-使用 `benchmark/pdf_ocr_test.py` 进行 PDF OCR 功能测试：
+| 模式 | 参数 | 说明 |
+|------|------|------|
+| 串行模式 | `-c 1` | 逐个请求，测量单请求延迟 (Latency) |
+| 异步模式 | `-c N` (N>1) | 先发后收，测量系统吞吐量 (QPS) |
+
+> **💡 提示**: 异步模式使用 `aiohttp` 实现先发后收，充分利用服务器 Pipeline 并行处理能力。
+
+### 📄 测试结果输出
+
+```
+benchmark/results/
+├── API_benchmark_report.md          # Image OCR 报告
+├── api_benchmark_results.json       # Image OCR 结果
+├── PDF_benchmark_report.md          # PDF OCR 报告
+├── pdf_benchmark_results.json       # PDF OCR 结果
+├── stress_benchmark_results.json    # 压力测试结果
+└── logs/                            # 服务器日志
+```
+
+<details>
+<summary><b>🔄 单独运行 Python 脚本</b></summary>
+
+如果需要更精细的控制，可以直接运行 Python 脚本：
+
+**Image OCR 测试**:
 
 ```bash
 cd server/benchmark
 
-# 测试 pdf_file/ 目录中的所有 PDF
-python3 pdf_ocr_test.py
-
-# 指定 DPI 和最大页数
-python3 pdf_ocr_test.py --dpi 150 --max-pages 100
-
-# 只测试指定 PDF 文件
-python3 pdf_ocr_test.py --pdf book-rev7.pdf
-
-# 详细输出模式
-python3 pdf_ocr_test.py -v
-
-# 查看帮助
-python3 pdf_ocr_test.py --help
+python3 run_api_benchmark.py \
+    -u "http://localhost:8080/ocr" \
+    -i "/path/to/images" \
+    -r 3 \
+    -c 10 \
+    -o "results/api_benchmark_results.json"
 ```
 
-**PDF 测试目录结构**
+**PDF OCR 测试**:
 
+```bash
+python3 run_pdf_benchmark.py \
+    -u "http://localhost:8080/ocr" \
+    -p "../pdf_file" \
+    -r 1 \
+    -c 4 \
+    --dpi 150 \
+    --max-pages 100 \
+    -o "results/pdf_benchmark_results.json"
 ```
-benchmark/
-├── pdf_file/           # 放置待测试的 PDF 文件
-└── result/             # OCR 结果输出目录
-    └── xxx_OCR_result.json
-```
 
-**测试结果**
+**Python 脚本参数**:
 
-- `result/<pdf名>_OCR_result.json` - 每个 PDF 的 OCR 结果
-- `result/test_report_<时间戳>.json` - 测试汇总报告
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-u, --url` | 服务器 URL | http://localhost:8080/ocr |
+| `-t, --token` | 认证 Token | test_token |
+| `-r, --runs` | 每项运行次数 | 1 |
+| `-c, --concurrency` | 并发 Worker 数量 | 10 (image) / 1 (pdf) |
+| `-i, --images` | 测试图片目录 | - |
+| `-p, --pdfs` | 测试 PDF 目录 | ../pdf_file |
+| `--dpi` | PDF 渲染 DPI | 150 |
+| `--max-pages` | PDF 最大处理页数 | 100 |
+| `--timeout` | 请求超时（秒） | 60 (image) / 600 (pdf) |
+| `-o, --output` | 输出 JSON 文件 | results/*.json |
+| `--report-dir` | Markdown 报告目录 | results |
+| `--no-report` | 跳过报告生成 | - |
 
-## 单元测试
+</details>
+
+---
+
+## ✅ 单元测试
+
+### 运行所有测试
 
 ```bash
 cd build_Release
 ctest --output-on-failure
 ```
 
-## 目录结构
+### PDF OCR 功能测试
+
+```bash
+cd server/tests
+
+# 确保服务器已运行，然后执行
+./run_pdf_ocr_test.sh
+
+# 或直接运行 Python 脚本
+python3 test_pdf_ocr.py --help
+```
+
+---
+
+## 📁 目录结构
 
 ```
 server/
-├── server_main.cpp      # 服务入口
-├── ocr_handler.cpp/h    # OCR 请求处理器
-├── pdf_handler.cpp/h    # PDF 渲染处理器
-├── file_handler.cpp/h   # 文件处理（Base64/URL）
-├── json_response.cpp/h  # JSON 响应构建器
-├── benchmark/           # 基准测试工具
-│   ├── run.sh           # 图像 API 测试脚本
-│   ├── pdf_ocr_test.py  # PDF OCR 测试脚本
-│   ├── pdf_file/        # 测试 PDF 文件
-│   ├── result/          # PDF 测试结果
-│   └── images/          # 测试图片
-└── tests/               # 单元测试
+├── 📜 server_main.cpp        # 服务入口
+├── 📜 ocr_handler.cpp/h      # OCR 请求处理器
+├── 📜 pdf_handler.cpp/h      # PDF 渲染处理器（基于 PDFium）
+├── 📜 file_handler.cpp/h     # 文件处理（Base64/URL）
+├── 📜 json_response.cpp/h    # JSON 响应构建器
+├── 📂 webui/                 # Gradio Web UI
+│   ├── 📜 app.py             # 主应用
+│   ├── 📜 requirements.txt   # Python 依赖
+│   ├── 📂 examples/          # 图片示例 (8 个)
+│   ├── 📂 examples_pdf/      # PDF 示例 (10 个)
+│   └── 📂 res/               # 资源文件 (Banner 等)
+├── 📂 benchmark/             # 基准测试工具
+│   ├── 📜 run.sh             # 统一测试入口
+│   ├── 📜 run_api_benchmark.py   # Image API 测试 (Python Async)
+│   ├── 📜 run_pdf_benchmark.py   # PDF API 测试 (Python Async)
+│   ├── 📜 api_benchmark.cpp      # 压力测试 (C++)
+│   └── 📂 results/           # 测试结果输出
+├── 📂 pdf_file/              # 测试 PDF 文件
+└── 📂 tests/                 # 单元测试
+    ├── 📜 run_pdf_ocr_test.sh    # PDF 测试启动脚本
+    ├── 📜 test_pdf_ocr.py        # PDF OCR 测试
+    ├── 📜 test_*.cpp             # C++ 单元测试
+    └── 📂 results/               # 测试结果
 ```
 
-## 输出
+---
 
-- 可视化图像: `output/vis/`
-- 日志: `logs/deepx_ocr.log`
+## 📤 输出目录
+
+| 目录 | 说明 |
+|------|------|
+| `output/vis/` | 可视化图像 |
+| `logs/deepx_ocr.log` | 服务日志 |
+| `benchmark/results/` | 基准测试结果 |
